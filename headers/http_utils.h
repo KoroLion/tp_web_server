@@ -9,6 +9,7 @@
 #include "fs_utils.h"
 
 #define MAX_BUFF 1024
+#define CHUNK_SIZE 4096
 
 struct Request {
     char method[MAX_BUFF];
@@ -16,6 +17,7 @@ struct Request {
 };
 
 struct Request parse_request(char* buff);
+char* read_headers(int sock);
 struct Content read_content(int sock);
 char* create_headers(int status, char *type, long content_length);
 void response(int connfd, int status, struct Content content);

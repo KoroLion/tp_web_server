@@ -24,12 +24,15 @@ const char DEFAULT_FILE[] = "index.html";
 void handle_connection(void* connfd_ptr/*, char *ip, int port*/) {
     int connfd = *((int*)connfd_ptr);
 
-    char *buff = malloc(MAX_REQUEST);
-    read(connfd, buff, MAX_REQUEST);
+    char* headers = read_headers(connfd);
+    if (headers == NULL) {
+        response_text(connfd, 500, "unable to read request");
+        return;
+    }
 
-    struct Request req = parse_request(buff);
-    free(buff);
-    // printf("%s %s (%s:%i)\n", req.method, req.url, ip, port);
+    struct Request req = parse_request(headers);
+    free(headers);
+
     printf("%s %s\n", req.method, req.url);
 
     if (has_double_dot(req.url)) {
@@ -73,6 +76,7 @@ void handle_connection(void* connfd_ptr/*, char *ip, int port*/) {
 }
 
 volatile sig_atomic_t sigterm_received = 0;
+pthread_mutex_t mutex_lock;
 
 void sigpipe_callback_handler() {
     printf("ERROR: SIGPIPE!\n");
@@ -83,6 +87,9 @@ void sigterm_callback_handler() {
 }
 
 int main() {
+    long cpus_amount = sysconf(_SC_NPROCESSORS_ONLN);
+    printf("%ld cpus available\n", cpus_amount);
+
     signal(SIGPIPE, sigpipe_callback_handler);
     //signal(SIGTERM, sigterm_callback_handler);
 
@@ -112,14 +119,16 @@ int main() {
         int *arg = malloc(sizeof(int));
         *arg = connfd;
 
-        int res = pthread_create(&thread, NULL, (void*) handle_connection, (void*) arg);
+        /*int res = pthread_create(&thread, NULL, (void*) handle_connection, (void*) arg);
         if (res != 0) {
             printf("ERROR: unable to create thread with error code %d", res);
         } else {
             pthread_detach(thread);
-        }
+        }*/
 
-        // handle_connection((void*) arg);
+        // printf("*********\n");
+        handle_connection((void*) arg);
+        // printf("---------\n");
     }
 
     printf("Closing server socket...");

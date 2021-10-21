@@ -34,6 +34,24 @@ struct Request parse_request(char* buff) {
     return req;
 }
 
+char* read_headers(int sock) {
+    int buff_size = CHUNK_SIZE;
+    int real_size = 0;
+    char *buff = malloc(buff_size);
+    while (strstr(buff, "\r\n\r\n") == 0) {
+        if (real_size + CHUNK_SIZE > buff_size) {
+            buff_size *= 2;
+            buff = realloc(buff, buff_size);
+        }
+        int bytes_read = read(sock, buff + real_size, CHUNK_SIZE);
+        if (bytes_read < 0) {
+            return NULL;
+        }
+        real_size += bytes_read;
+    }
+    return buff;
+}
+
 struct Content read_content(int sock) {
     struct Content content;
     int data_size = 4096;
