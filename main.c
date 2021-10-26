@@ -17,34 +17,51 @@
 const char BIND_ADDR[] = "127.0.0.1";
 const int PORT = 8081;
 
-//int socket_data_arr_size = 0;
-//char **socket_data_arr;
+int socket_arr_size = 0;
+char **socket_data_arr;
+int *socket_size_arr;
+int *socket_real_size_arr;
 
 const char BASE_DIR[] = "./";
 const char DEFAULT_FILE[] = "index.html";
 
 
-void handle_connection(int connfd, int tid) {
-    printf("T#%d: reading headers\n", tid);
-    char* headers = read_headers(connfd, tid);
-    if (headers == NULL) {
-        printf("ERROR: error while reading a request\n");
-        return;
-    }
-    if (strlen(headers) == 0) {
-        printf("ERROR: connection closed before request was read\n");
-        free(headers);
-        return;
+int read_socket(int sock) {
+    printf("Reading from %d\n", sock);
+    if (socket_data_arr[sock] == NULL) {
+        socket_size_arr[sock] = CHUNK_SIZE + 1;
+        socket_real_size_arr[sock] = 0;
+        socket_data_arr[sock] = malloc(CHUNK_SIZE + 1);
     }
 
-    struct Request req = parse_request(headers);
+    if (socket_real_size_arr[sock] + CHUNK_SIZE + 1 > socket_size_arr[sock]) {
+        socket_size_arr[sock] *= 2;
+        socket_data_arr[sock] = realloc(socket_data_arr[sock], socket_size_arr[sock]);
+    }
+
+    int bytes_read = recv(sock, socket_data_arr[sock] + socket_real_size_arr[sock], CHUNK_SIZE, 0);
+    if (bytes_read <= 0) {
+        return -1;
+    }
+    socket_real_size_arr[sock] += bytes_read;
+    socket_data_arr[sock][socket_real_size_arr[sock]] = 0;
+
+    if (strstr(socket_data_arr[sock], "\r\n\r\n") == 0) {
+        return 0; // not found
+    } else {
+        return 1; // found
+    }
+}
+
+void respond_to_data(int connfd, char *data) {
+    struct Request req = parse_request(data);
     /*printf("***************\n");
     printf("%s\n", headers);
     printf("***************\n");*/
-    printf("T#%d: %s %s\n", tid, req.method, req.url);
+    printf("%s %s\n", req.method, req.url);
     // printf("-----------\n");
 
-    free(headers);
+    free(data);
 
     if (has_double_dot(req.url)) {
         response_text(connfd, 403, "url contains double dot!");
@@ -116,14 +133,39 @@ void worker_thread(void *arg) {
             continue;
         }
 
+        while (FD_SETSIZE > socket_arr_size) {
+            printf("WARNING: realloc of socket_data to fit for %d sockets\n", FD_SETSIZE);
+            socket_arr_size *= 2;
+            socket_data_arr = realloc(socket_data_arr, sizeof(*socket_data_arr) * socket_arr_size);
+            socket_real_size_arr = realloc(socket_real_size_arr, sizeof(*socket_real_size_arr) * socket_arr_size);
+            socket_size_arr = realloc(socket_size_arr, sizeof(*socket_size_arr) * socket_arr_size);
+        }
+
         for (int i = 0; i < FD_SETSIZE; i++) {
             if (FD_ISSET(i, &ready_sockets)) {
                 if (i == wta->listenfd) {
                     int sock = accept(wta->listenfd, NULL, NULL);
                     FD_SET(sock, &current_sockets);
                 } else {
-                    handle_connection(i, wta->thread_id);
-                    FD_CLR(i, &current_sockets);
+                    int res = read_socket(i);
+                    if (res == -1) {
+                        FD_CLR(i, &current_sockets);
+                        printf("ERROR: Socket %d is unexpectedly closed\n", i);
+                        shutdown(i, SHUT_RDWR);
+                        close(i);
+                    } else if (res == 1) {
+                        FD_CLR(i, &current_sockets);
+                        shutdown(i, SHUT_RD);
+
+                        char *data = malloc(socket_real_size_arr[i]);
+                        data = memcpy(data, socket_data_arr[i], socket_real_size_arr[i]);
+                        socket_data_arr[i] = NULL;
+
+                        respond_to_data(i, data);
+
+                        shutdown(i, SHUT_RDWR);
+                        close(i);
+                    }
                 }
             }
         }
@@ -140,8 +182,13 @@ int main() {
     printf("%ld cpus available\n", cpus_amount);
     cpus_amount = 1;
 
-    //socket_data_arr_size = 1024;
-    //socket_data_arr = malloc(socket_data_arr_size * sizeof(char*));
+    socket_arr_size = 1024;
+    socket_data_arr = malloc(socket_arr_size * sizeof(char*));
+    for (int i = 0; i < socket_arr_size; i++) {
+        socket_data_arr[i] = NULL;
+    }
+    socket_size_arr = malloc(socket_arr_size * sizeof(int));
+    socket_real_size_arr = malloc(socket_arr_size * sizeof(int));
 
     // signal(SIGPIPE, sigpipe_callback_handler);
     // signal(SIGTERM, sigterm_callback_handler);
