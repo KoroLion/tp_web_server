@@ -17,6 +17,9 @@
 const char BIND_ADDR[] = "127.0.0.1";
 const int PORT = 8081;
 
+//int socket_data_arr_size = 0;
+//char **socket_data_arr;
+
 const char BASE_DIR[] = "./";
 const char DEFAULT_FILE[] = "index.html";
 
@@ -102,18 +105,43 @@ struct WorkerThreadArg {
 void worker_thread(void *arg) {
     struct WorkerThreadArg *wta = (struct WorkerThreadArg*)arg;
 
+    fd_set current_sockets, ready_sockets;
+    FD_ZERO(&current_sockets);
+    FD_SET(wta->listenfd, &current_sockets);
+
     while (!sigterm_received) {
-        int sock = accept(wta->listenfd, NULL, NULL);
+        ready_sockets = current_sockets;
+        if (select(FD_SETSIZE, &ready_sockets, NULL, NULL, NULL) < 0) {
+            printf("ERROR: Unable to select!\n");
+            continue;
+        }
+
+        for (int i = 0; i < FD_SETSIZE; i++) {
+            if (FD_ISSET(i, &ready_sockets)) {
+                if (i == wta->listenfd) {
+                    int sock = accept(wta->listenfd, NULL, NULL);
+                    FD_SET(sock, &current_sockets);
+                } else {
+                    handle_connection(i, wta->thread_id);
+                    FD_CLR(i, &current_sockets);
+                }
+            }
+        }
+
+        /*int sock = accept(wta->listenfd, NULL, NULL);
         printf("BUSY: thread #%d\n", wta->thread_id);
         handle_connection(sock, wta->thread_id);
-        printf("FREE: thread #%d\n", wta->thread_id);
+        printf("FREE: thread #%d\n", wta->thread_id);*/
     }
 }
 
 int main() {
     long cpus_amount = sysconf(_SC_NPROCESSORS_ONLN);
     printf("%ld cpus available\n", cpus_amount);
-    // cpus_amount = 2;
+    cpus_amount = 1;
+
+    //socket_data_arr_size = 1024;
+    //socket_data_arr = malloc(socket_data_arr_size * sizeof(char*));
 
     // signal(SIGPIPE, sigpipe_callback_handler);
     // signal(SIGTERM, sigterm_callback_handler);
