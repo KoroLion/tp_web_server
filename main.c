@@ -16,24 +16,32 @@
 
 const char BIND_ADDR[] = "127.0.0.1";
 const int PORT = 8081;
-const int MAX_REQUEST = 4096;
 
 const char BASE_DIR[] = "./";
 const char DEFAULT_FILE[] = "index.html";
 
-void handle_connection(void* connfd_ptr/*, char *ip, int port*/) {
-    int connfd = *((int*)connfd_ptr);
 
-    char* headers = read_headers(connfd);
+void handle_connection(int connfd, int tid) {
+    printf("T#%d: reading headers\n", tid);
+    char* headers = read_headers(connfd, tid);
     if (headers == NULL) {
-        response_text(connfd, 500, "unable to read request");
+        printf("ERROR: error while reading a request\n");
+        return;
+    }
+    if (strlen(headers) == 0) {
+        printf("ERROR: connection closed before request was read\n");
+        free(headers);
         return;
     }
 
     struct Request req = parse_request(headers);
-    free(headers);
+    /*printf("***************\n");
+    printf("%s\n", headers);
+    printf("***************\n");*/
+    printf("T#%d: %s %s\n", tid, req.method, req.url);
+    // printf("-----------\n");
 
-    printf("%s %s\n", req.method, req.url);
+    free(headers);
 
     if (has_double_dot(req.url)) {
         response_text(connfd, 403, "url contains double dot!");
@@ -86,12 +94,29 @@ void sigterm_callback_handler() {
     sigterm_received = 1;
 }
 
+struct WorkerThreadArg {
+    int thread_id;
+    int listenfd;
+};
+
+void worker_thread(void *arg) {
+    struct WorkerThreadArg *wta = (struct WorkerThreadArg*)arg;
+
+    while (!sigterm_received) {
+        int sock = accept(wta->listenfd, NULL, NULL);
+        printf("BUSY: thread #%d\n", wta->thread_id);
+        handle_connection(sock, wta->thread_id);
+        printf("FREE: thread #%d\n", wta->thread_id);
+    }
+}
+
 int main() {
     long cpus_amount = sysconf(_SC_NPROCESSORS_ONLN);
     printf("%ld cpus available\n", cpus_amount);
+    // cpus_amount = 2;
 
-    signal(SIGPIPE, sigpipe_callback_handler);
-    //signal(SIGTERM, sigterm_callback_handler);
+    // signal(SIGPIPE, sigpipe_callback_handler);
+    // signal(SIGTERM, sigterm_callback_handler);
 
     int sockfd = create_server(BIND_ADDR, PORT);
     if (sockfd < 0) {
@@ -100,7 +125,20 @@ int main() {
     }
     printf("INFO: Socket is listening at :%i\n", PORT);
 
-    while (!sigterm_received) {
+    pthread_t *worker_threads = malloc(cpus_amount * sizeof(pthread_t));
+    for (int i = 0; i < cpus_amount; i++) {
+        struct WorkerThreadArg *wta = malloc(sizeof(struct WorkerThreadArg));
+        wta->listenfd = sockfd;
+        wta->thread_id = i;
+        pthread_create(&worker_threads[i], NULL, (void*) worker_thread, (void*) wta);
+    }
+
+    for (int i = 0; i < cpus_amount; i++) {
+        pthread_join(worker_threads[i], NULL);
+    }
+    free(worker_threads);
+
+    /*while (!sigterm_received) {
         struct sockaddr_in cli;
         int len = sizeof(cli);
         int connfd = accept(sockfd, (struct sockaddr*)&cli, (socklen_t*)&len);
@@ -109,27 +147,19 @@ int main() {
             return -1;
         }
 
-        /*char *ip = malloc(64);
-        get_ip(ip, cli);
-        int port = cli.sin_port;
-        printf("Connection from %s:%i\n", ip, port);
-        free(ip);*/
+        pthread_mutex_lock(&mutex);
+        printf("Pushing to stack %d\n", connfd);
+        stack_push(sockets_stack, connfd);
+        pthread_mutex_unlock(&mutex);
 
-        pthread_t thread;
+        // pthread_t thread;
         int *arg = malloc(sizeof(int));
         *arg = connfd;
-
-        /*int res = pthread_create(&thread, NULL, (void*) handle_connection, (void*) arg);
-        if (res != 0) {
-            printf("ERROR: unable to create thread with error code %d", res);
-        } else {
-            pthread_detach(thread);
-        }*/
 
         // printf("*********\n");
         handle_connection((void*) arg);
         // printf("---------\n");
-    }
+    }*/
 
     printf("Closing server socket...");
     close(sockfd);

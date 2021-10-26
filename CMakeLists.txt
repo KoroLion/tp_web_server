@@ -8,4 +8,5 @@ add_executable(web_server
         http_utils.c
         net_utils.c
         utils.c
-        fs_utils.c)
+        fs_utils.c
+        )

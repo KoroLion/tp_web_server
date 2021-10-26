@@ -34,39 +34,29 @@ struct Request parse_request(char* buff) {
     return req;
 }
 
-char* read_headers(int sock) {
-    int buff_size = CHUNK_SIZE;
+char* read_headers(int sock, int tid) {
+    int buff_size = CHUNK_SIZE + 1;
     int real_size = 0;
     char *buff = malloc(buff_size);
-    while (strstr(buff, "\r\n\r\n") == 0) {
-        if (real_size + CHUNK_SIZE > buff_size) {
+    buff[0] = 0;
+    int bytes_read = 1;
+    while (bytes_read > 0 && strstr(buff, "\r\n\r\n") == 0) {
+        if (real_size + CHUNK_SIZE + 1 > buff_size) {
             buff_size *= 2;
             buff = realloc(buff, buff_size);
         }
-        int bytes_read = read(sock, buff + real_size, CHUNK_SIZE);
+
+        printf("T#%d: starting recv...\n", tid);
+        bytes_read = recv(sock, buff + real_size, CHUNK_SIZE, 0);
+        printf("T#%d: read %d bytes\n", tid, bytes_read);
+
         if (bytes_read < 0) {
             return NULL;
         }
         real_size += bytes_read;
+        buff[real_size] = 0;
     }
     return buff;
-}
-
-struct Content read_content(int sock) {
-    struct Content content;
-    int data_size = 4096;
-    int amount = 0;
-    const int step = 1024;
-    content.data = malloc(data_size);
-    content.length = 0;
-    while ((amount = read(sock, content.data + content.length, step)) > 0) {
-        content.length += amount;
-        if (content.length + step >= data_size) {
-            data_size *= 2;
-            content.data = realloc(content.data, data_size);
-        }
-    }
-    return content;
 }
 
 char* create_headers(int status, char *type, long content_length) {
@@ -85,12 +75,12 @@ char* create_headers(int status, char *type, long content_length) {
 
 void response(int connfd, int status, struct Content content) {
     char *headers = create_headers(status, content.type, content.length);
-    write(connfd, headers, strlen(headers));
+    send(connfd, headers, strlen(headers), 0);
     free(headers);
 
     // we don't have body if it's HEAD
     if (content.data != NULL) {
-        write(connfd, content.data, content.length);
+        send(connfd, content.data, content.length, 0);
     }
 
     shutdown(connfd, SHUT_RDWR);

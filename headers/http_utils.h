@@ -17,7 +17,7 @@ struct Request {
 };
 
 struct Request parse_request(char* buff);
-char* read_headers(int sock);
+char* read_headers(int sock, int tid);
 struct Content read_content(int sock);
 char* create_headers(int status, char *type, long content_length);
 void response(int connfd, int status, struct Content content);
