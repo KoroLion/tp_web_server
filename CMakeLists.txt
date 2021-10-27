@@ -10,3 +10,4 @@ add_executable(web_server
         utils.c
         fs_utils.c
         )
+target_link_libraries(web_server pthread)

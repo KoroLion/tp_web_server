@@ -4,6 +4,8 @@
 #include "unistd.h"
 
 #include "sys/socket.h"
+#include "sys/select.h"
+
 #include "errno.h"
 #include "fcntl.h"
 
