@@ -34,31 +34,6 @@ struct Request parse_request(char* buff) {
     return req;
 }
 
-char* read_headers(int sock, int tid) {
-    int buff_size = CHUNK_SIZE + 1;
-    int real_size = 0;
-    char *buff = malloc(buff_size);
-    buff[0] = 0;
-    int bytes_read = 1;
-    while (bytes_read > 0 && strstr(buff, "\r\n\r\n") == 0) {
-        if (real_size + CHUNK_SIZE + 1 > buff_size) {
-            buff_size *= 2;
-            buff = realloc(buff, buff_size);
-        }
-
-        printf("T#%d: starting recv...\n", tid);
-        bytes_read = recv(sock, buff + real_size, CHUNK_SIZE, 0);
-        printf("T#%d: read %d bytes\n", tid, bytes_read);
-
-        if (bytes_read < 0) {
-            return NULL;
-        }
-        real_size += bytes_read;
-        buff[real_size] = 0;
-    }
-    return buff;
-}
-
 char* create_headers(int status, char *type, long content_length) {
     char format_str[] =
             "HTTP/1.1 %i %i\r\n"
@@ -82,9 +57,6 @@ void response(int connfd, int status, struct Content content) {
     if (content.data != NULL) {
         send(connfd, content.data, content.length, 0);
     }
-
-    shutdown(connfd, SHUT_RDWR);
-    close(connfd);
 }
 
 void response_text(int connfd, int status, const char *text) {

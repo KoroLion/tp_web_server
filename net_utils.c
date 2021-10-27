@@ -13,6 +13,8 @@
 
 #include "sys/socket.h"
 
+#define LISTEN_BACKLOG 128
+
 void get_ip(const char *ip, struct sockaddr_in cli) {
     inet_ntop(AF_INET, &cli.sin_addr.s_addr, ip, 64);
 }
@@ -44,7 +46,7 @@ int create_server(const char *addr, const int port) {
         return -1;
     }
 
-    if (listen(sockfd, 64) != 0) {
+    if (listen(sockfd, LISTEN_BACKLOG) != 0) {
         close(sockfd);
         return -1;
     }
