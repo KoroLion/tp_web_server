@@ -16,7 +16,7 @@
 
 struct Content {
     char *data;
-    unsigned length;
+    unsigned long length;
     char type[128];
 };
 

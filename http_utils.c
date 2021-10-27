@@ -34,7 +34,7 @@ struct Request parse_request(char* buff) {
     return req;
 }
 
-char* create_headers(int status, char *type, long content_length) {
+char* create_headers(int status, char *type, unsigned long content_length) {
     char format_str[] =
             "HTTP/1.1 %i %i\r\n"
             "Server: LioKor C Web Server\r\n"
@@ -50,13 +50,29 @@ char* create_headers(int status, char *type, long content_length) {
 
 void response(int connfd, int status, struct Content content) {
     char *headers = create_headers(status, content.type, content.length);
-    send(connfd, headers, strlen(headers), 0);
+    unsigned long headers_length = strlen(headers);
+
+    unsigned long total_size = headers_length + content.length;
+    char *data = malloc(total_size);
+    memcpy(data, headers, strlen(headers));
     free(headers);
+    headers = NULL;
 
     // we don't have body if it's HEAD
     if (content.data != NULL) {
-        send(connfd, content.data, content.length, 0);
+        memcpy(data + headers_length, content.data, content.length);
     }
+
+    ssize_t total_bytes_send = 0;
+    while (total_bytes_send < total_size) {
+        ssize_t bytes_send = send(connfd, data + total_bytes_send, total_size - total_bytes_send, MSG_NOSIGNAL);
+        if (bytes_send <= 0) {
+            free(data);
+            return;
+        }
+        total_bytes_send += bytes_send;
+    }
+    free(data);
 }
 
 void response_text(int connfd, int status, const char *text) {

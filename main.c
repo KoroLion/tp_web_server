@@ -44,7 +44,7 @@ int read_socket(int sock) {
         socket_read_data[sock] = srd;
     }
 
-    /*while (true) {
+    while (true) {
         while (srd->real_size + CHUNK_SIZE + 1 > srd->max_size) {
             srd->max_size *= 2;
             srd->data = realloc(srd->data, srd->max_size);
@@ -69,8 +69,7 @@ int read_socket(int sock) {
         if (strstr(srd->data, "\r\n\r\n") != 0) {
             return 1; // packet fully read
         }
-    }*/
-    return 1;
+    }
 }
 
 void clear_socket_read(int sock) {
@@ -139,7 +138,7 @@ void respond_to_data(int connfd, char *data, int tid) {
 volatile sig_atomic_t sigterm_received = 0;
 
 void sigpipe_callback_handler() {
-    printf("ERROR: SIGPIPE!\n");
+    printf("WARNING: SIGPIPE!\n");
 }
 
 void sigterm_callback_handler() {
@@ -172,8 +171,6 @@ void worker_thread(void *arg) {
                 continue;
             }
 
-            printf("Handling %d socket\n", sock);
-
             if (sock == wta->listenfd) {
                 int sock = accept(wta->listenfd, NULL, NULL);
                 FD_SET(sock, &current_sockets);
@@ -196,17 +193,15 @@ void worker_thread(void *arg) {
 
                 shutdown(sock, SHUT_RD);
 
-                printf("#%ld answer is OK\n", ans++);
-
-                /*struct SocketReadData *srd = socket_read_data[sock];
+                struct SocketReadData *srd = socket_read_data[sock];
                 char *data = malloc(srd->real_size);
-                data = memcpy(data, srd->data, srd->real_size);*/
+                data = memcpy(data, srd->data, srd->real_size);
 
                 clear_socket_read(sock);
 
-                char resp[] = "HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length: 4\r\n\r\nwolf";
-                send(sock, resp, strlen(resp), MSG_DONTWAIT);
-                // respond_to_data(sock, data, wta->thread_id);
+                // char resp[] = "HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length: 4\r\n\r\nwolf";
+                // send(sock, resp, strlen(resp), MSG_DONTWAIT);
+                respond_to_data(sock, data, wta->thread_id);
 
                 close_socket(sock);
             }
@@ -216,7 +211,7 @@ void worker_thread(void *arg) {
 
 int main() {
     long cpus_amount = sysconf(_SC_NPROCESSORS_ONLN);
-    printf("%ld cpus available\n", cpus_amount);
+    printf("%ld cpus available\r\n", cpus_amount);
     cpus_amount = 1;
 
     socket_read_data = malloc(FD_SETSIZE * sizeof(struct SocketReadData*));
@@ -234,7 +229,7 @@ int main() {
     }
     int flags = fcntl(server_sock, F_GETFL, 0);
     fcntl(server_sock, F_SETFL, flags | O_NONBLOCK);
-    printf("INFO: Socket %d is listening at %s:%i\n", server_sock, BIND_ADDR, PORT);
+    printf("INFO: Socket %d is listening at %s:%i\r\n", server_sock, BIND_ADDR, PORT);
 
     pthread_t *worker_threads = malloc(cpus_amount * sizeof(pthread_t));
     for (int i = 0; i < cpus_amount; i++) {
