@@ -17,8 +17,9 @@
 #include "headers/http_utils.h"
 #include "headers/net_utils.h"
 
-const char BIND_ADDR[] = "127.0.0.1";
-const int PORT = 8081;
+char BIND_ADDR[16] = "127.0.0.1";
+int PORT = 8082;
+
 const int PACKET_MAX_SIZE = 1 * 1024 * 1024; // 1 MB
 
 struct SocketReadData {
@@ -199,8 +200,6 @@ void worker_thread(void *arg) {
 
                 clear_socket_read(sock);
 
-                // char resp[] = "HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length: 4\r\n\r\nwolf";
-                // send(sock, resp, strlen(resp), MSG_DONTWAIT);
                 respond_to_data(sock, data, wta->thread_id);
 
                 close_socket(sock);
@@ -209,7 +208,7 @@ void worker_thread(void *arg) {
     }
 }
 
-int main() {
+int main(int argc, char *argv[]) {
     long cpus_amount = sysconf(_SC_NPROCESSORS_ONLN);
     printf("%ld cpus available\r\n", cpus_amount);
     cpus_amount = 1;
@@ -221,6 +220,11 @@ int main() {
 
     // signal(SIGPIPE, sigpipe_callback_handler);
     // signal(SIGTERM, sigterm_callback_handler);
+
+    if (argc == 3) {
+        strncpy(BIND_ADDR, argv[1], 16);
+        PORT = atoi(argv[2]);
+    }
 
     int server_sock = create_server(BIND_ADDR, PORT);
     if (server_sock < 0) {

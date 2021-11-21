@@ -8,6 +8,8 @@
 #include "string.h"
 #include "stdlib.h"
 
+const int READ_CHUNK = 4096 * 8;
+
 struct Request parse_request(char* buff) {
     struct Request req;
 
@@ -34,6 +36,18 @@ struct Request parse_request(char* buff) {
     return req;
 }
 
+bool send_all(int sock, char *data, unsigned long size) {
+    ssize_t total_bytes_send = 0;
+    while (total_bytes_send < size) {
+        ssize_t bytes_send = send(sock, data + total_bytes_send, size - total_bytes_send, MSG_NOSIGNAL);
+        if (bytes_send <= 0) {
+            return false;
+        }
+        total_bytes_send += bytes_send;
+    }
+    return true;
+}
+
 char* create_headers(int status, char *type, unsigned long content_length) {
     char format_str[] =
             "HTTP/1.1 %i %i\r\n"
@@ -52,27 +66,27 @@ void response(int connfd, int status, struct Content content) {
     char *headers = create_headers(status, content.type, content.length);
     unsigned long headers_length = strlen(headers);
 
-    unsigned long total_size = headers_length + content.length;
-    char *data = malloc(total_size);
-    memcpy(data, headers, strlen(headers));
+    send_all(connfd, headers, headers_length);
     free(headers);
-    headers = NULL;
 
-    // we don't have body if it's HEAD
     if (content.data != NULL) {
-        memcpy(data + headers_length, content.data, content.length);
-    }
-
-    ssize_t total_bytes_send = 0;
-    while (total_bytes_send < total_size) {
-        ssize_t bytes_send = send(connfd, data + total_bytes_send, total_size - total_bytes_send, MSG_NOSIGNAL);
-        if (bytes_send <= 0) {
-            free(data);
+        send_all(connfd, content.data, content.length);
+    } else {
+        FILE *fp = fopen(content.path, "rb");
+        if (fp == NULL) {
             return;
         }
-        total_bytes_send += bytes_send;
+
+        size_t total_read = 0;
+        char *chunk = malloc(READ_CHUNK);
+        while (total_read < content.length) {
+            size_t cur_read = fread(chunk, 1, READ_CHUNK, fp);
+            total_read += cur_read;
+            send_all(connfd, chunk, cur_read);
+        }
+
+        fclose(fp);
     }
-    free(data);
 }
 
 void response_text(int connfd, int status, const char *text) {
