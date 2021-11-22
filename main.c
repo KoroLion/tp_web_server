@@ -4,6 +4,7 @@
 #include "unistd.h"
 
 #include "sys/socket.h"
+#include "sys/epoll.h"
 #include "sys/select.h"
 
 #include "errno.h"
@@ -17,8 +18,11 @@
 #include "headers/http_utils.h"
 #include "headers/net_utils.h"
 
+#define MAX_EVENTS 2048
+
 char BIND_ADDR[16] = "127.0.0.1";
 int PORT = 8082;
+
 
 const int PACKET_MAX_SIZE = 1 * 1024 * 1024; // 1 MB
 
@@ -138,10 +142,6 @@ void respond_to_data(int connfd, char *data, int tid) {
 
 volatile sig_atomic_t sigterm_received = 0;
 
-void sigpipe_callback_handler() {
-    printf("WARNING: SIGPIPE!\n");
-}
-
 void sigterm_callback_handler() {
     sigterm_received = 1;
 }
@@ -151,58 +151,56 @@ struct WorkerThreadArg {
     int listenfd;
 };
 
+int epoll_ctl_add(int epfd, int fd, uint32_t events) {
+    struct epoll_event ev;
+    ev.events = events;
+    ev.data.fd = fd;
+    return epoll_ctl(epfd, EPOLL_CTL_ADD, fd, &ev);
+}
+
 void worker_thread(void *arg) {
     struct WorkerThreadArg *wta = (struct WorkerThreadArg*)arg;
 
-    fd_set current_sockets, ready_sockets;
-    FD_ZERO(&current_sockets);
-    FD_SET(wta->listenfd, &current_sockets);
+    int epfd = epoll_create(1);
+    epoll_ctl_add(epfd, wta->listenfd, EPOLLIN | EPOLLOUT | EPOLLET);
 
-    long ans = 0;
-
+    struct epoll_event events[MAX_EVENTS];
     while (!sigterm_received) {
-        ready_sockets = current_sockets;
-        if (select(FD_SETSIZE, &ready_sockets, NULL, NULL, NULL) < 0) {
-            printf("ERROR: Unable to select!\n");
-            continue;
-        }
 
-        for (int sock = 0; sock < FD_SETSIZE; sock++) {
-            if (!FD_ISSET(sock, &ready_sockets)) {
-                continue;
-            }
+        int nfds = epoll_wait(epfd, events, MAX_EVENTS, -1);
+        printf("%d descriptors are ready!\n", nfds);
+
+        for (int i = 0; i < nfds; i++) {
+            struct epoll_event event = events[i];
+            int sock = event.data.fd;
 
             if (sock == wta->listenfd) {
-                int sock = accept(wta->listenfd, NULL, NULL);
-                FD_SET(sock, &current_sockets);
-                continue;
-            }
+                int new_sock = accept(wta->listenfd, NULL, NULL);
+                epoll_ctl_add(epfd, new_sock, EPOLLIN | EPOLLET | EPOLLRDHUP | EPOLLHUP);
+            } else if (event.events & (EPOLLIN | EPOLLRDHUP | EPOLLHUP)) {
+                int res = read_socket(sock);
+                if (res != 0) {
+                    printf("clearing %d\n", sock);
+                    epoll_ctl(epfd, EPOLL_CTL_DEL, sock, NULL);
+                }
 
-            int res = read_socket(sock);
-            if (res == -1) {
-                // socket closed by client
-                // stop monitoring socket
-                FD_CLR(sock, &current_sockets);
+                if (res == -1) {
+                    printf("ERROR: Socket %d is unexpectedly closed\n", sock);
+                    clear_socket_read(sock);
+                    close_socket(sock);
+                } else if (res == 1) {
+                    shutdown(sock, SHUT_RD);
 
-                printf("ERROR: Socket %d is unexpectedly closed\n", sock);
-                clear_socket_read(sock);
-                close_socket(sock);
-            } else if (res == 1) {
-                // all headers are read
-                // stop monitoring socket
-                FD_CLR(sock, &current_sockets);
+                    struct SocketReadData *srd = socket_read_data[sock];
+                    char *data = malloc(srd->real_size);
+                    data = memcpy(data, srd->data, srd->real_size);
 
-                shutdown(sock, SHUT_RD);
+                    clear_socket_read(sock);
 
-                struct SocketReadData *srd = socket_read_data[sock];
-                char *data = malloc(srd->real_size);
-                data = memcpy(data, srd->data, srd->real_size);
+                    respond_to_data(sock, data, wta->thread_id);
 
-                clear_socket_read(sock);
-
-                respond_to_data(sock, data, wta->thread_id);
-
-                close_socket(sock);
+                    close_socket(sock);
+                }
             }
         }
     }
@@ -228,7 +226,7 @@ int main(int argc, char *argv[]) {
 
     int server_sock = create_server(BIND_ADDR, PORT);
     if (server_sock < 0) {
-        printf("ERROR: Unable to create server!");
+        printf("ERROR: Unable to create server!\n");
         return server_sock;
     }
     int flags = fcntl(server_sock, F_GETFL, 0);
@@ -248,7 +246,7 @@ int main(int argc, char *argv[]) {
     }
     free(worker_threads);
 
-    printf("Closing server socket...");
+    printf("Closing server socket...\n");
     close(server_sock);
 
     return 0;
