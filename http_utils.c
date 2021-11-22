@@ -84,6 +84,7 @@ void response(int connfd, int status, struct Content content) {
             total_read += cur_read;
             send_all(connfd, chunk, cur_read);
         }
+        free(chunk);
 
         fclose(fp);
     }

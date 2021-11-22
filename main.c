@@ -28,13 +28,17 @@ struct SocketReadData {
     long real_size;
 };
 
-struct SocketReadData **socket_read_data;
+struct WorkerThreadArg {
+    int thread_id;
+    int listenfd;
+    char *data;
+};
 
 const char BASE_DIR[] = "./";
 const char DEFAULT_FILE[] = "index.html";
 
 
-int read_socket(int sock) {
+int read_socket(int sock, struct SocketReadData **socket_read_data) {
     struct SocketReadData *srd = socket_read_data[sock];
     if (srd == NULL) {
         srd = malloc(sizeof(struct SocketReadData));
@@ -73,7 +77,7 @@ int read_socket(int sock) {
     }
 }
 
-void clear_socket_read(int sock) {
+void clear_socket_read(int sock, struct SocketReadData **socket_read_data) {
     struct SocketReadData *srd = socket_read_data[sock];
     if (srd != NULL) {
         if (srd->data != NULL) {
@@ -85,19 +89,19 @@ void clear_socket_read(int sock) {
     }
 }
 
-void close_socket(int sock) {
-    shutdown(sock, SHUT_RDWR);
-    close(sock);
-}
+void respond_to_data(void *arg) {
+    struct WorkerThreadArg *wta = (struct WorkerThreadArg*)arg;
+    int connfd = wta->listenfd;
+    char *data = wta->data;
+    int tid = wta->thread_id;
 
-void respond_to_data(int connfd, char *data, int tid) {
     struct Request req = parse_request(data);
-    free(data);
     data = NULL;
     printf("T#%d, S#%d: %s %s\n", tid, connfd, req.method, req.url);
 
     if (has_double_dot(req.url)) {
         response_text(connfd, 403, "url contains double dot!");
+        close_socket(connfd);
         return;
     }
 
@@ -105,6 +109,7 @@ void respond_to_data(int connfd, char *data, int tid) {
     bool is_head = strcmp(req.method, "HEAD") == 0;
     if (!is_get && !is_head) {
         response_text(connfd, 405, "405 (method not allowed)");
+        close_socket(connfd);
         return;
     }
 
@@ -119,6 +124,7 @@ void respond_to_data(int connfd, char *data, int tid) {
             response_text(connfd, 404, "404 (Not found)");
         }
         free(path_buf);
+        close_socket(connfd);
         return;
     }
 
@@ -128,37 +134,33 @@ void respond_to_data(int connfd, char *data, int tid) {
     if (content.length == 0) {
         response_text(connfd, 403, "403 (Access denied)");
         free(content.data);
+        close_socket(connfd);
         return;
     }
 
     response(connfd, 200, content);
 
     free(content.data);
+    close_socket(connfd);
 }
 
 volatile sig_atomic_t sigterm_received = 0;
 
-void sigpipe_callback_handler() {
-    printf("WARNING: SIGPIPE!\n");
-}
-
 void sigterm_callback_handler() {
+    printf("SIGTERM received! Attempting to close...\n");
     sigterm_received = 1;
 }
 
-struct WorkerThreadArg {
-    int thread_id;
-    int listenfd;
-};
-
-void worker_thread(void *arg) {
-    struct WorkerThreadArg *wta = (struct WorkerThreadArg*)arg;
+void start_select(int server_sock) {
+    struct SocketReadData **socket_read_data;
+    socket_read_data = malloc(FD_SETSIZE * sizeof(struct SocketReadData*));
+    for (int i = 0; i < FD_SETSIZE; i++) {
+        socket_read_data[i] = NULL;
+    }
 
     fd_set current_sockets, ready_sockets;
     FD_ZERO(&current_sockets);
-    FD_SET(wta->listenfd, &current_sockets);
-
-    long ans = 0;
+    FD_SET(server_sock, &current_sockets);
 
     while (!sigterm_received) {
         ready_sockets = current_sockets;
@@ -172,37 +174,41 @@ void worker_thread(void *arg) {
                 continue;
             }
 
-            if (sock == wta->listenfd) {
-                int sock = accept(wta->listenfd, NULL, NULL);
-                FD_SET(sock, &current_sockets);
+            if (sock == server_sock) {
+                int new_sock = accept(server_sock, NULL, NULL);
+                FD_SET(new_sock, &current_sockets);
                 continue;
             }
 
-            int res = read_socket(sock);
+            int res = read_socket(sock, socket_read_data);
             if (res == -1) {
                 // socket closed by client
                 // stop monitoring socket
                 FD_CLR(sock, &current_sockets);
 
                 printf("ERROR: Socket %d is unexpectedly closed\n", sock);
-                clear_socket_read(sock);
+                clear_socket_read(sock, socket_read_data);
                 close_socket(sock);
             } else if (res == 1) {
                 // all headers are read
                 // stop monitoring socket
                 FD_CLR(sock, &current_sockets);
-
                 shutdown(sock, SHUT_RD);
 
                 struct SocketReadData *srd = socket_read_data[sock];
-                char *data = malloc(srd->real_size);
-                data = memcpy(data, srd->data, srd->real_size);
+                struct WorkerThreadArg respond_arg;
 
-                clear_socket_read(sock);
+                respond_arg.data = malloc(srd->real_size);
+                memcpy(respond_arg.data, srd->data, srd->real_size);
+                clear_socket_read(sock, socket_read_data);
 
-                respond_to_data(sock, data, wta->thread_id);
+                respond_arg.thread_id = 0;
+                respond_arg.listenfd = sock;
 
-                close_socket(sock);
+                /*pthread_t tid;
+                pthread_create(&tid, NULL, (void*) respond_to_data, (void*) &respond_arg);
+                pthread_detach(tid);*/
+                respond_to_data((void*) &respond_arg);
             }
         }
     }
@@ -211,15 +217,9 @@ void worker_thread(void *arg) {
 int main(int argc, char *argv[]) {
     long cpus_amount = sysconf(_SC_NPROCESSORS_ONLN);
     printf("%ld cpus available\r\n", cpus_amount);
-    cpus_amount = 1;
+    cpus_amount = 2;
 
-    socket_read_data = malloc(FD_SETSIZE * sizeof(struct SocketReadData*));
-    for (int i = 0; i < FD_SETSIZE; i++) {
-        socket_read_data[i] = NULL;
-    }
-
-    // signal(SIGPIPE, sigpipe_callback_handler);
-    // signal(SIGTERM, sigterm_callback_handler);
+    signal(SIGTERM, sigterm_callback_handler);
 
     if (argc == 3) {
         strncpy(BIND_ADDR, argv[1], 16);
@@ -228,27 +228,16 @@ int main(int argc, char *argv[]) {
 
     int server_sock = create_server(BIND_ADDR, PORT);
     if (server_sock < 0) {
-        printf("ERROR: Unable to create server!");
+        printf("ERROR: Unable to create server!\n");
         return server_sock;
     }
     int flags = fcntl(server_sock, F_GETFL, 0);
     fcntl(server_sock, F_SETFL, flags | O_NONBLOCK);
     printf("INFO: Socket %d is listening at %s:%i\r\n", server_sock, BIND_ADDR, PORT);
 
-    pthread_t *worker_threads = malloc(cpus_amount * sizeof(pthread_t));
-    for (int i = 0; i < cpus_amount; i++) {
-        struct WorkerThreadArg *wta = malloc(sizeof(struct WorkerThreadArg));
-        wta->listenfd = server_sock;
-        wta->thread_id = i;
-        pthread_create(&worker_threads[i], NULL, (void*) worker_thread, (void*) wta);
-    }
+    start_select(server_sock);
 
-    for (int i = 0; i < cpus_amount; i++) {
-        pthread_join(worker_threads[i], NULL);
-    }
-    free(worker_threads);
-
-    printf("Closing server socket...");
+    printf("Closing server socket...\n");
     close(server_sock);
 
     return 0;
