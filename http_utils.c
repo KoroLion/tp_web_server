@@ -5,10 +5,11 @@
 #include "headers/fs_utils.h"
 #include "headers/utils.h"
 
+#include "sys/sendfile.h"
+
+#include "stdio.h"
 #include "string.h"
 #include "stdlib.h"
-
-const int READ_CHUNK = 4096 * 8;
 
 struct Request parse_request(char* buff) {
     struct Request req;
@@ -62,45 +63,44 @@ char* create_headers(int status, char *type, unsigned long content_length) {
     return headers;
 }
 
-void response(int connfd, int status, struct Content content) {
-    char *headers = create_headers(status, content.type, content.length);
-    unsigned long headers_length = strlen(headers);
+struct Response response_file(int status, struct File f) {
+    char *headers = create_headers(status, f.type, f.length);
 
-    send_all(connfd, headers, headers_length);
-    free(headers);
+    struct Response resp;
 
-    if (content.data != NULL) {
-        send_all(connfd, content.data, content.length);
-    } else {
-        if (content.fd == NULL) {
-            return;
-        }
+    resp.data_offset = 0;
+    resp.data_length = strlen(headers);
+    resp.data = malloc(resp.data_length);
+    strncpy(resp.data, headers, resp.data_length);
 
-        off_t total_sent = 0;
-        while (total_sent < content.length) {
-            off_t cur_sent = 0;
-            int res = sendfile(fileno(content.fd), connfd, total_sent, &cur_sent, NULL, 0);
-            if (res != 0) {
-                printf("ERROR: sendfile\n");
-                return;
-            }
-            total_sent += cur_sent;
-        }
+    resp.fd_offset = 0;
+    resp.fd_length = f.length;
+    resp.fd = f.fd;
 
-        fclose(content.fd);
-    }
+    return resp;
 }
 
-void response_text(int connfd, int status, const char *text) {
-    struct Content content;
-    content.length = strlen(text);
-    content.data = malloc(content.length + 1);
-    strncpy(content.data, text, content.length);
-    strncpy(content.type, "text/plain", sizeof(content.type));
+struct Response response_text(int status, const char *text) {
+    unsigned long text_len = strlen(text);
 
-    response(connfd, status, content);
+    char *headers = create_headers(status, "text/plain", text_len);
+    unsigned long headers_len = strlen(headers);
 
-    free(content.data);
+    struct Response resp;
+    resp.fd = 0;
+    resp.fd_length = 0;
+    resp.fd_offset = 0;
+
+    resp.data_offset = 0;
+    resp.data_length = headers_len + text_len;
+    resp.data = malloc(headers_len + text_len);
+
+    memcpy(resp.data, headers, headers_len);
+    memcpy(resp.data + headers_len, text, text_len);
+
+    free(headers);
+
+    return resp;
 }
 
 bool url_to_path(char *path_buf, unsigned path_length, const char *url, const char *base_dir, const char *default_file) {

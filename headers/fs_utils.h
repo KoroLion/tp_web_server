@@ -14,9 +14,8 @@
 #include "sys/types.h"
 #include "sys/stat.h"
 
-struct Content {
+struct File {
     FILE *fd;
-    char *data;
     unsigned long length;
     char type[128];
 };
@@ -26,6 +25,6 @@ char* get_type(char *ext);
 
 bool is_regular_file(const char *fpath);
 bool is_directory(const char *fpath);
-struct Content read_file(char *fpath, bool only_head);
+struct File open_file(char *fpath);
 
 #endif //WEB_SERVER_FS_UTILS_H

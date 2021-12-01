@@ -62,26 +62,24 @@ bool is_directory(const char *fpath) {
     return S_ISDIR(path_stat.st_mode);
 }
 
-struct Content read_file(char *fpath, bool only_head) {
-    struct Content content;
+struct File open_file(char *fpath) {
+    struct File f;
 
-    FILE* fp = fopen(fpath, "rb");
-    if (fp == 0) {
-        content.length = 0;
-        return content;
+    f.fd = fopen(fpath, "rb");;
+    if (f.fd == 0) {
+        f.length = 0;
+        return f;
     }
-    fseek(fp, 0, SEEK_END);
-    content.length = ftell(fp);
-    content.data = NULL;
 
-    fseek(fp, 0, SEEK_SET);
-    content.fd = fp;
+    fseek(f.fd, 0, SEEK_END);
+    f.length = ftell(f.fd);
+    fseek(f.fd, 0, SEEK_SET);
 
     char *ext = get_ext(fpath);
     char *type = get_type(ext);
     free(ext);
 
-    strncpy(content.type, type, sizeof(content.type));
+    strncpy(f.type, type, sizeof(f.type));
 
-    return content;
+    return f;
 }

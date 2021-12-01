@@ -16,10 +16,22 @@ struct Request {
     char url[MAX_BUFF];
 };
 
+struct Response {
+    char *data;
+    unsigned long data_length;
+    off_t data_offset;
+
+    FILE *fd;
+    unsigned long fd_length;
+    off_t fd_offset;
+};
+
 struct Request parse_request(char* buff);
 char* create_headers(int status, char *type, unsigned long content_length);
-void response(int connfd, int status, struct Content content);
-void response_text(int connfd, int status, const char *text);
+
+struct Response response_file(int status, struct File content);
+struct Response response_text(int status, const char *text);
+
 bool url_to_path(char *path, unsigned path_length, const char *url, const char *base_dir, const char *default_file);
 void urldecode(char *dst, const char *src);
 

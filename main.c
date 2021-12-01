@@ -5,10 +5,12 @@
 
 #include "sys/socket.h"
 #include "sys/select.h"
+#include "sys/sendfile.h"
 
 #include "errno.h"
 
 #include "signal.h"
+#include "fcntl.h"
 
 #include "headers/utils.h"
 #include "headers/fs_utils.h"
@@ -20,10 +22,14 @@ int PORT = 8082;
 
 const int PACKET_MAX_SIZE = 1 * 1024 * 1024; // 1 MB
 
-struct SocketReadData {
+struct SocketData {
     char *data;
     long max_size;
     long real_size;
+
+    struct Response *response;
+
+    bool done;
 };
 
 struct WorkerThreadArg {
@@ -36,24 +42,14 @@ const char BASE_DIR[] = "./";
 const char DEFAULT_FILE[] = "index.html";
 
 
-int read_socket(int sock, struct SocketReadData **socket_read_data) {
-    struct SocketReadData *srd = socket_read_data[sock];
-    if (srd == NULL) {
-        srd = malloc(sizeof(struct SocketReadData));
-        srd->max_size = CHUNK_SIZE + 1;
-        srd->real_size = 0;
-        srd->data = malloc(srd->max_size);
-        srd->data[0] = 0;
-        socket_read_data[sock] = srd;
-    }
-
+int read_socket(int sock, struct SocketData *sd) {
     while (true) {
-        while (srd->real_size + CHUNK_SIZE + 1 > srd->max_size) {
-            srd->max_size *= 2;
-            srd->data = realloc(srd->data, srd->max_size);
+        while (sd->real_size + CHUNK_SIZE + 1 > sd->max_size) {
+            sd->max_size *= 2;
+            sd->data = realloc(sd->data, sd->max_size);
         }
 
-        long bytes_read = recv(sock, srd->data + srd->real_size, CHUNK_SIZE, MSG_DONTWAIT);
+        long bytes_read = recv(sock, sd->data + sd->real_size, CHUNK_SIZE, MSG_DONTWAIT);
         if (bytes_read <= 0) {
             if (bytes_read == -1 && (errno == EWOULDBLOCK || errno == EAGAIN)) {
                 return 0; // continue read
@@ -62,53 +58,32 @@ int read_socket(int sock, struct SocketReadData **socket_read_data) {
             }
         }
 
-        srd->real_size += bytes_read;
-        if (srd->real_size > PACKET_MAX_SIZE) {
+        sd->real_size += bytes_read;
+        if (sd->real_size > PACKET_MAX_SIZE) {
             return -2; // packet is larger than allowed
         }
 
-        srd->data[srd->real_size] = 0;
+        sd->data[sd->real_size] = 0;
 
-        if (strstr(srd->data, "\r\n\r\n") != 0) {
+        if (strstr(sd->data, "\r\n\r\n") != 0) {
             return 1; // packet fully read
         }
     }
 }
 
-void clear_socket_read(int sock, struct SocketReadData **socket_read_data) {
-    struct SocketReadData *srd = socket_read_data[sock];
-    if (srd != NULL) {
-        if (srd->data != NULL) {
-            free(srd->data);
-            srd->data = NULL;
-        }
-        free(srd);
-        socket_read_data[sock] = NULL;
-    }
-}
-
-void respond_to_data(void *arg) {
-    struct WorkerThreadArg *wta = (struct WorkerThreadArg*)arg;
-    int connfd = wta->listenfd;
-    char *data = wta->data;
-    int tid = wta->thread_id;
-
+struct Response get_response(char *data) {
     struct Request req = parse_request(data);
-    data = NULL;
-    printf("T#%d, S#%d: %s %s\n", tid, connfd, req.method, req.url);
+
+    printf("%s %s\n", req.method, req.url);
 
     if (has_double_dot(req.url)) {
-        response_text(connfd, 403, "url contains double dot!");
-        close_socket(connfd);
-        return;
+        return response_text(403, "url contains double dot!");
     }
 
     bool is_get = strcmp(req.method, "GET") == 0;
     bool is_head = strcmp(req.method, "HEAD") == 0;
     if (!is_get && !is_head) {
-        response_text(connfd, 405, "405 (method not allowed)");
-        close_socket(connfd);
-        return;
+        return response_text(405, "405 (method not allowed)");
     }
 
     unsigned path_length = strlen(req.url) + strlen(BASE_DIR) + strlen(DEFAULT_FILE) + 16;
@@ -116,30 +91,96 @@ void respond_to_data(void *arg) {
     bool default_added = url_to_path(path_buf, path_length, req.url, BASE_DIR, DEFAULT_FILE);
 
     if (!is_regular_file(path_buf)) {
-        if (default_added) {
-            response_text(connfd, 403, "403 (No index file found)");
-        } else {
-            response_text(connfd, 404, "404 (Not found)");
-        }
         free(path_buf);
-        close_socket(connfd);
-        return;
+
+        if (default_added) {
+            return response_text(403, "403 (No index file found)");
+        } else {
+            return response_text(404, "404 (Not found)");
+        }
     }
 
-    struct Content content = read_file(path_buf, is_head);
+    struct File file = open_file(path_buf);
     free(path_buf);
 
-    if (content.length == 0) {
-        response_text(connfd, 403, "403 (Access denied)");
-        free(content.data);
-        close_socket(connfd);
-        return;
+    if (file.length == 0) {
+        return response_text(403, "403 (Access denied)");
     }
 
-    response(connfd, 200, content);
+    struct Response resp = response_file(200, file);
+    if (is_head) {
+        resp.fd_length = 0;
+    }
+    return resp;
+}
 
-    free(content.data);
-    close_socket(connfd);
+char* read_request(int sock, struct SocketData *sd) {
+    int res = read_socket(sock, sd);
+    if (res == -1) {
+        // socket closed by client => it's an error
+        sd->done = true;
+        return NULL;
+    } else if (res == 1) {
+        // all headers are read
+        shutdown(sock, SHUT_RD);
+        return sd->data;
+    } else {
+        return NULL;
+    }
+}
+
+void clear_socket_read(int sock, struct SocketData **socket_data) {
+    struct SocketData *sd = socket_data[sock];
+    if (sd != NULL) {
+        if (sd->data != NULL) {
+            free(sd->data);
+            sd->data = NULL;
+        }
+
+        if (sd->response != NULL) {
+            if (sd->response->fd != 0) {
+                fclose(sd->response->fd);
+                sd->response->fd = 0;
+            }
+
+            if (sd->response->data != NULL) {
+                free(sd->response->data);
+                sd->response->data = NULL;
+            }
+
+            free(sd->response);
+        }
+
+        free(sd);
+
+        socket_data[sock] = NULL;
+    }
+}
+
+void send_response(int sock, struct SocketData *sd) {
+    struct Response *resp = sd->response;
+
+    if (resp->data_offset < resp->data_length) {
+        char *pos = resp->data + resp->data_offset;
+        size_t to_send = resp->data_length - resp->data_offset;
+
+        off_t sent = send(sock, pos, to_send, 0);
+        if (sent > 0) {
+            resp->data_offset += sent;
+        }
+        if (sent < 0) {
+            sd->done = true;
+        }
+    } else if (resp->fd_offset < resp->fd_length) {
+        size_t to_send = resp->fd_length - resp->fd_offset;
+
+        size_t sent = sendfile(sock, fileno(resp->fd), &resp->fd_offset, to_send);
+        if (sent < 0) {
+            sd->done = true;
+        }
+    } else {
+        sd->done = true;
+    }
 }
 
 volatile sig_atomic_t sigterm_received = 0;
@@ -149,11 +190,26 @@ void sigterm_callback_handler() {
     sigterm_received = 1;
 }
 
+struct SocketData* init_sd(int sock, struct SocketData **socket_data) {
+    struct SocketData *sd = socket_data[sock];
+    if (sd == NULL) {
+        sd = malloc(sizeof(struct SocketData));
+        sd->max_size = CHUNK_SIZE + 1;
+        sd->real_size = 0;
+        sd->data = malloc(sd->max_size);
+        sd->data[0] = 0;
+        sd->response = NULL;
+        sd->done = false;
+        socket_data[sock] = sd;
+    }
+    return sd;
+}
+
 void start_select(int server_sock) {
-    struct SocketReadData **socket_read_data;
-    socket_read_data = malloc(FD_SETSIZE * sizeof(struct SocketReadData*));
+    struct SocketData **socket_data;
+    socket_data = malloc(FD_SETSIZE * sizeof(struct SocketData*));
     for (int i = 0; i < FD_SETSIZE; i++) {
-        socket_read_data[i] = NULL;
+        socket_data[i] = NULL;
     }
 
     fd_set current_sockets, ready_sockets;
@@ -174,39 +230,33 @@ void start_select(int server_sock) {
 
             if (sock == server_sock) {
                 int new_sock = accept(server_sock, NULL, NULL);
+                set_nonblock(new_sock);
+                init_sd(new_sock, socket_data);
+
                 FD_SET(new_sock, &current_sockets);
-                continue;
-            }
+            } else {
+                struct SocketData *sd = socket_data[sock];
 
-            int res = read_socket(sock, socket_read_data);
-            if (res == -1) {
-                // socket closed by client
-                // stop monitoring socket
-                FD_CLR(sock, &current_sockets);
+                if (sd->response == NULL) {
+                    char *request = read_request(sock, sd);
+                    if (request != NULL) {
+                        struct Response resp = get_response(request);
+                        sd->response = malloc(sizeof(resp));
+                        memcpy(sd->response, &resp, sizeof(resp));
+                    }
+                } else {
+                    send_response(sock, sd);
+                }
 
-                printf("ERROR: Socket %d is unexpectedly closed\n", sock);
-                clear_socket_read(sock, socket_read_data);
-                close_socket(sock);
-            } else if (res == 1) {
-                // all headers are read
-                // stop monitoring socket
-                FD_CLR(sock, &current_sockets);
-                shutdown(sock, SHUT_RD);
+                if (sd->done) {
+                    printf("ERROR: Socket %d is closed\n", sock);
+                    FD_CLR(sock, &current_sockets);
 
-                struct SocketReadData *srd = socket_read_data[sock];
-                struct WorkerThreadArg respond_arg;
+                    shutdown(sock, SHUT_RDWR);
+                    close_socket(sock);
 
-                respond_arg.data = malloc(srd->real_size);
-                memcpy(respond_arg.data, srd->data, srd->real_size);
-                clear_socket_read(sock, socket_read_data);
-
-                respond_arg.thread_id = 0;
-                respond_arg.listenfd = sock;
-
-                /*pthread_t tid;
-                pthread_create(&tid, NULL, (void*) respond_to_data, (void*) &respond_arg);
-                pthread_detach(tid);*/
-                respond_to_data((void*) &respond_arg);
+                    clear_socket_read(sock, socket_data);
+                }
             }
         }
     }
@@ -218,6 +268,7 @@ int main(int argc, char *argv[]) {
     cpus_amount = 2;
 
     signal(SIGTERM, sigterm_callback_handler);
+    signal(SIGPIPE, SIG_IGN);
 
     if (argc == 3) {
         strncpy(BIND_ADDR, argv[1], 16);

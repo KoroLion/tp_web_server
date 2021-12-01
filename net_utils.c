@@ -21,6 +21,11 @@ void get_ip(const char *ip, struct sockaddr_in cli) {
     inet_ntop(AF_INET, &cli.sin_addr.s_addr, ip, 64);
 }
 
+int set_nonblock(int sock) {
+    int flags = fcntl(sock, F_GETFL, 0);
+    fcntl(sock, F_SETFL, flags | O_NONBLOCK);
+}
+
 int create_server(const char *addr, const int port, bool blocking) {
     struct sockaddr_in serveraddr;
 
@@ -49,8 +54,7 @@ int create_server(const char *addr, const int port, bool blocking) {
     }
 
     if (!blocking) {
-        int flags = fcntl(sockfd, F_GETFL, 0);
-        fcntl(sockfd, F_SETFL, flags | O_NONBLOCK);
+        set_nonblock(sockfd);
     }
 
     if (listen(sockfd, LISTEN_BACKLOG) != 0) {
