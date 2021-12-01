@@ -6,7 +6,7 @@
 #define WEB_SERVER_NET_UTILS_H
 
 void get_ip(const char *ip, struct sockaddr_in cli);
-int create_server(const char *addr, int port);
+int create_server(const char *addr, int port, bool blocking);
 
 void close_socket(int sock) {
     shutdown(sock, SHUT_RDWR);

@@ -15,7 +15,7 @@
 #include "sys/stat.h"
 
 struct Content {
-    char *path;
+    FILE *fd;
     char *data;
     unsigned long length;
     char type[128];

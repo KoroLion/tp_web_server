@@ -5,8 +5,10 @@
 #include "strings.h"
 #include "string.h"
 
+#include "stdbool.h"
 #include "stdlib.h"
 #include "unistd.h"
+#include "fcntl.h"
 
 #include "netinet/in.h"
 #include "arpa/inet.h"
@@ -19,7 +21,7 @@ void get_ip(const char *ip, struct sockaddr_in cli) {
     inet_ntop(AF_INET, &cli.sin_addr.s_addr, ip, 64);
 }
 
-int create_server(const char *addr, const int port) {
+int create_server(const char *addr, const int port, bool blocking) {
     struct sockaddr_in serveraddr;
 
     int sockfd = socket(AF_INET, SOCK_STREAM, 0);
@@ -44,6 +46,11 @@ int create_server(const char *addr, const int port) {
     if (bind(sockfd, (struct sockaddr*)&serveraddr, sizeof(serveraddr)) != 0) {
         close(sockfd);
         return -1;
+    }
+
+    if (!blocking) {
+        int flags = fcntl(sockfd, F_GETFL, 0);
+        fcntl(sockfd, F_SETFL, flags | O_NONBLOCK);
     }
 
     if (listen(sockfd, LISTEN_BACKLOG) != 0) {

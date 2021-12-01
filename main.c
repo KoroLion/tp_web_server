@@ -7,9 +7,7 @@
 #include "sys/select.h"
 
 #include "errno.h"
-#include "fcntl.h"
 
-#include "pthread.h"
 #include "signal.h"
 
 #include "headers/utils.h"
@@ -226,13 +224,11 @@ int main(int argc, char *argv[]) {
         PORT = atoi(argv[2]);
     }
 
-    int server_sock = create_server(BIND_ADDR, PORT);
+    int server_sock = create_server(BIND_ADDR, PORT, false);
     if (server_sock < 0) {
         printf("ERROR: Unable to create server!\n");
         return server_sock;
     }
-    int flags = fcntl(server_sock, F_GETFL, 0);
-    fcntl(server_sock, F_SETFL, flags | O_NONBLOCK);
     printf("INFO: Socket %d is listening at %s:%i\r\n", server_sock, BIND_ADDR, PORT);
 
     start_select(server_sock);

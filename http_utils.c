@@ -72,21 +72,22 @@ void response(int connfd, int status, struct Content content) {
     if (content.data != NULL) {
         send_all(connfd, content.data, content.length);
     } else {
-        FILE *fp = fopen(content.path, "rb");
-        if (fp == NULL) {
+        if (content.fd == NULL) {
             return;
         }
 
-        size_t total_read = 0;
-        char *chunk = malloc(READ_CHUNK);
-        while (total_read < content.length) {
-            size_t cur_read = fread(chunk, 1, READ_CHUNK, fp);
-            total_read += cur_read;
-            send_all(connfd, chunk, cur_read);
+        off_t total_sent = 0;
+        while (total_sent < content.length) {
+            off_t cur_sent = 0;
+            int res = sendfile(fileno(content.fd), connfd, total_sent, &cur_sent, NULL, 0);
+            if (res != 0) {
+                printf("ERROR: sendfile\n");
+                return;
+            }
+            total_sent += cur_sent;
         }
-        free(chunk);
 
-        fclose(fp);
+        fclose(content.fd);
     }
 }
 

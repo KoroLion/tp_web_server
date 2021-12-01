@@ -73,16 +73,15 @@ struct Content read_file(char *fpath, bool only_head) {
     fseek(fp, 0, SEEK_END);
     content.length = ftell(fp);
     content.data = NULL;
-    fclose(fp);
+
+    fseek(fp, 0, SEEK_SET);
+    content.fd = fp;
 
     char *ext = get_ext(fpath);
     char *type = get_type(ext);
     free(ext);
 
     strncpy(content.type, type, sizeof(content.type));
-
-    content.path = malloc(strlen(fpath) + 1);
-    strcpy(content.path, fpath);
 
     return content;
 }
