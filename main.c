@@ -4,6 +4,7 @@
 #include "unistd.h"
 
 #include "sys/socket.h"
+#include "sys/epoll.h"
 #include "sys/select.h"
 #include "sys/sendfile.h"
 
@@ -17,8 +18,10 @@
 #include "headers/http_utils.h"
 #include "headers/net_utils.h"
 
+#define MAX_EVENTS 2048
+
 char BIND_ADDR[16] = "127.0.0.1";
-int PORT = 8082;
+int PORT = 8081;
 
 const int PACKET_MAX_SIZE = 1 * 1024 * 1024; // 1 MB
 
@@ -118,52 +121,76 @@ void sigterm_callback_handler() {
     sigterm_received = 1;
 }
 
+int epoll_ctl_add(int epfd, int fd, uint32_t events) {
+    struct epoll_event ev;
+    ev.events = events;
+    ev.data.fd = fd;
+    return epoll_ctl(epfd, EPOLL_CTL_ADD, fd, &ev);
+}
+
 void start_select(int server_sock) {
     struct SocketData **socket_data;
-    socket_data = malloc(FD_SETSIZE * sizeof(struct SocketData*));
-    for (int i = 0; i < FD_SETSIZE; i++) {
+    socket_data = malloc(MAX_EVENTS * sizeof(struct SocketData*));
+    for (int i = 0; i < MAX_EVENTS; i++) {
         socket_data[i] = NULL;
     }
 
-    fd_set current_sockets, ready_sockets;
+    int epfd = epoll_create(1);
+    epoll_ctl_add(epfd, server_sock, EPOLLIN | EPOLLOUT);
+    struct epoll_event events[MAX_EVENTS];
+
+    /*fd_set current_sockets, ready_sockets;
     FD_ZERO(&current_sockets);
-    FD_SET(server_sock, &current_sockets);
+    FD_SET(server_sock, &current_sockets);*/
 
     while (!sigterm_received) {
-        ready_sockets = current_sockets;
+        int nfds = epoll_wait(epfd, events, MAX_EVENTS, -1);
+        /*ready_sockets = current_sockets;
         if (select(FD_SETSIZE, &ready_sockets, NULL, NULL, NULL) < 0) {
             printf("ERROR: Unable to select!\n");
             continue;
-        }
+        }*/
 
-        for (int sock = 0; sock < FD_SETSIZE; sock++) {
-            if (!FD_ISSET(sock, &ready_sockets)) {
+        for (int i = 0; i < nfds; i++) {
+            /*if (!FD_ISSET(sock, &ready_sockets)) {
                 continue;
-            }
+            }*/
+            struct epoll_event event = events[i];
+            int sock = event.data.fd;
 
             if (sock == server_sock) {
                 int new_sock = accept(server_sock, NULL, NULL);
                 set_nonblock(new_sock);
                 init_sd(new_sock, socket_data);
 
-                FD_SET(new_sock, &current_sockets);
+                epoll_ctl_add(epfd, new_sock, EPOLLIN | EPOLLOUT | EPOLLRDHUP | EPOLLHUP);
+                // FD_SET(new_sock, &current_sockets);
             } else {
                 struct SocketData *sd = socket_data[sock];
 
-                if (sd->response == NULL) {
+                bool ready_to_read = event.events & EPOLLIN;
+                bool ready_to_write = event.events & EPOLLOUT;
+                bool closed = event.events & EPOLLHUP;
+
+                if (!closed && ready_to_read && sd->response == NULL) {
                     char *request = read_request(sock, sd);
                     if (request != NULL) {
                         struct Response resp = get_response(request);
                         sd->response = malloc(sizeof(resp));
                         memcpy(sd->response, &resp, sizeof(resp));
                     }
-                } else {
+                }
+
+                if (!closed && ready_to_write && sd->response != NULL ) {
                     send_response(sock, sd);
                 }
 
-                if (sd->done) {
-                    printf("ERROR: Socket %d is closed\n", sock);
-                    FD_CLR(sock, &current_sockets);
+                if (sd->done || closed) {
+                    if (closed) {
+                        printf("ERROR: Socket %d is closed\n", sock);
+                    }
+                    epoll_ctl(epfd, EPOLL_CTL_DEL, sock, NULL);
+                    // FD_CLR(sock, &current_sockets);
 
                     shutdown(sock, SHUT_RDWR);
                     close_socket(sock);
