@@ -22,54 +22,8 @@ int PORT = 8082;
 
 const int PACKET_MAX_SIZE = 1 * 1024 * 1024; // 1 MB
 
-struct SocketData {
-    char *data;
-    long max_size;
-    long real_size;
-
-    struct Response *response;
-
-    bool done;
-};
-
-struct WorkerThreadArg {
-    int thread_id;
-    int listenfd;
-    char *data;
-};
-
 const char BASE_DIR[] = "./";
 const char DEFAULT_FILE[] = "index.html";
-
-
-int read_socket(int sock, struct SocketData *sd) {
-    while (true) {
-        while (sd->real_size + CHUNK_SIZE + 1 > sd->max_size) {
-            sd->max_size *= 2;
-            sd->data = realloc(sd->data, sd->max_size);
-        }
-
-        long bytes_read = recv(sock, sd->data + sd->real_size, CHUNK_SIZE, MSG_DONTWAIT);
-        if (bytes_read <= 0) {
-            if (bytes_read == -1 && (errno == EWOULDBLOCK || errno == EAGAIN)) {
-                return 0; // continue read
-            } else {
-                return -1; // socket closed by itself
-            }
-        }
-
-        sd->real_size += bytes_read;
-        if (sd->real_size > PACKET_MAX_SIZE) {
-            return -2; // packet is larger than allowed
-        }
-
-        sd->data[sd->real_size] = 0;
-
-        if (strstr(sd->data, "\r\n\r\n") != 0) {
-            return 1; // packet fully read
-        }
-    }
-}
 
 struct Response get_response(char *data) {
     struct Request req = parse_request(data);
@@ -115,45 +69,16 @@ struct Response get_response(char *data) {
 }
 
 char* read_request(int sock, struct SocketData *sd) {
-    int res = read_socket(sock, sd);
-    if (res == -1) {
-        // socket closed by client => it's an error
+    int res = read_socket(sock, sd, PACKET_MAX_SIZE);
+
+    if (res == SOCK_CLOSED || res == SOCK_ERROR) {
         sd->done = true;
         return NULL;
-    } else if (res == 1) {
-        // all headers are read
+    } else if (res == READ_DONE) {
         shutdown(sock, SHUT_RD);
         return sd->data;
     } else {
         return NULL;
-    }
-}
-
-void clear_socket_read(int sock, struct SocketData **socket_data) {
-    struct SocketData *sd = socket_data[sock];
-    if (sd != NULL) {
-        if (sd->data != NULL) {
-            free(sd->data);
-            sd->data = NULL;
-        }
-
-        if (sd->response != NULL) {
-            if (sd->response->fd != 0) {
-                fclose(sd->response->fd);
-                sd->response->fd = 0;
-            }
-
-            if (sd->response->data != NULL) {
-                free(sd->response->data);
-                sd->response->data = NULL;
-            }
-
-            free(sd->response);
-        }
-
-        free(sd);
-
-        socket_data[sock] = NULL;
     }
 }
 
@@ -165,11 +90,13 @@ void send_response(int sock, struct SocketData *sd) {
         size_t to_send = resp->data_length - resp->data_offset;
 
         off_t sent = send(sock, pos, to_send, 0);
-        if (sent > 0) {
-            resp->data_offset += sent;
-        }
         if (sent < 0) {
             sd->done = true;
+            return;
+        }
+
+        if (sent > 0) {
+            resp->data_offset += sent;
         }
     } else if (resp->fd_offset < resp->fd_length) {
         size_t to_send = resp->fd_length - resp->fd_offset;
@@ -177,6 +104,7 @@ void send_response(int sock, struct SocketData *sd) {
         size_t sent = sendfile(sock, fileno(resp->fd), &resp->fd_offset, to_send);
         if (sent < 0) {
             sd->done = true;
+            return;
         }
     } else {
         sd->done = true;
@@ -188,21 +116,6 @@ volatile sig_atomic_t sigterm_received = 0;
 void sigterm_callback_handler() {
     printf("SIGTERM received! Attempting to close...\n");
     sigterm_received = 1;
-}
-
-struct SocketData* init_sd(int sock, struct SocketData **socket_data) {
-    struct SocketData *sd = socket_data[sock];
-    if (sd == NULL) {
-        sd = malloc(sizeof(struct SocketData));
-        sd->max_size = CHUNK_SIZE + 1;
-        sd->real_size = 0;
-        sd->data = malloc(sd->max_size);
-        sd->data[0] = 0;
-        sd->response = NULL;
-        sd->done = false;
-        socket_data[sock] = sd;
-    }
-    return sd;
 }
 
 void start_select(int server_sock) {
@@ -255,7 +168,7 @@ void start_select(int server_sock) {
                     shutdown(sock, SHUT_RDWR);
                     close_socket(sock);
 
-                    clear_socket_read(sock, socket_data);
+                    free_sd(sock, socket_data);
                 }
             }
         }
