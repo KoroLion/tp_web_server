@@ -42,7 +42,7 @@ struct Response get_response(char *data) {
         return response_text(400, "bad request");
     }
 
-    printf("T#%d: %s %s\n", gettid(), req.method, req.url);
+    printf("T#%d: %s %s\n", get_tid_hash(), req.method, req.url);
 
     if (has_double_dot(req.url)) {
         return response_text(403, "url contains double dot!");
@@ -130,28 +130,24 @@ void sigterm_callback_handler() {
     sigterm_received = 1;
 }
 
-int epoll_ctl_add(int epfd, int fd, uint32_t events) {
+int epoll_ctl_add(int epfd, int fd, struct SocketData *sd, uint32_t events) {
     struct epoll_event ev;
     ev.events = events;
-    ev.data.fd = fd;
+    ev.data.ptr = sd;
     return epoll_ctl(epfd, EPOLL_CTL_ADD, fd, &ev);
 }
 
 void worker_thread(void* arg) {
-    printf("INFO: Worker thread started!\n", gettid());
+    printf("INFO: Worker thread #%d started!\n", get_tid_hash());
 
     struct WorkerThreadArg *wta = arg;
     int server_sock = wta->server_sock;
 
-    struct SocketData **socket_data;
-    socket_data = malloc(MAX_EVENTS * sizeof(struct SocketData*));
-    for (int i = 0; i < MAX_EVENTS; i++) {
-        socket_data[i] = NULL;
-    }
-
     int epfd = epoll_create(1);
-    epoll_ctl_add(epfd, server_sock, EPOLLIN | EPOLLOUT);
     struct epoll_event events[MAX_EVENTS];
+
+    struct SocketData *server_sd = malloc_sd(server_sock);
+    epoll_ctl_add(epfd, server_sock, server_sd, EPOLLIN | EPOLLOUT);
 
     while (!sigterm_received) {
         // timeout to check for sigterm
@@ -159,17 +155,17 @@ void worker_thread(void* arg) {
 
         for (int i = 0; i < nfds; i++) {
             struct epoll_event event = events[i];
-            int sock = event.data.fd;
+
+            struct SocketData *sd = event.data.ptr;
+            int sock = sd->fd;
 
             if (sock == server_sock) {
                 int new_sock = accept(server_sock, NULL, NULL);
                 set_nonblock(new_sock);
-                init_sd(new_sock, socket_data);
 
-                epoll_ctl_add(epfd, new_sock, EPOLLIN | EPOLLOUT | EPOLLRDHUP | EPOLLHUP);
+                struct SocketData *new_sd = malloc_sd(new_sock);
+                epoll_ctl_add(epfd, new_sock, new_sd, EPOLLIN | EPOLLOUT | EPOLLRDHUP | EPOLLHUP);
             } else {
-                struct SocketData *sd = socket_data[sock];
-
                 bool ready_to_read = event.events & EPOLLIN;
                 bool ready_to_write = event.events & EPOLLOUT;
                 bool closed = event.events & EPOLLHUP;
@@ -198,7 +194,7 @@ void worker_thread(void* arg) {
                     shutdown(sock, SHUT_RDWR);
                     close_socket(sock);
 
-                    free_sd(sock, socket_data);
+                    free_sd(sd);
                 }
             }
         }

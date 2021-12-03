@@ -8,6 +8,7 @@
 #include "stdbool.h"
 #include "ctype.h"
 
+unsigned get_tid_hash();
 bool has_double_dot(const char *s);
 bool starts_with(const char *s, const char *subs);
 

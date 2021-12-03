@@ -3,8 +3,13 @@
 //
 
 #include "string.h"
+#include "pthread.h"
 
 #include "headers/utils.h"
+
+unsigned get_tid_hash() {
+    return pthread_self() % 1000;
+}
 
 bool has_double_dot(const char *s) {
     return strstr(s, "/..") != 0;

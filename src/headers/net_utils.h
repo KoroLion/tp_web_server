@@ -11,6 +11,8 @@
 #define SOCK_ERROR -2
 
 struct SocketData {
+    int fd;
+
     char *data;
     long max_size;
     long real_size;
@@ -53,48 +55,43 @@ int read_http_request(int sock, struct SocketData *sd, unsigned long max_size) {
     }
 }
 
-struct SocketData* init_sd(int sock, struct SocketData **socket_data) {
-    struct SocketData *sd = socket_data[sock];
-    if (sd == NULL) {
-        sd = malloc(sizeof(struct SocketData));
-        sd->max_size = CHUNK_SIZE + 1;
-        sd->real_size = 0;
-        sd->data = malloc(sd->max_size);
-        sd->data[0] = 0;
-        sd->response = NULL;
-        sd->done = false;
-        socket_data[sock] = sd;
-    }
+struct SocketData* malloc_sd(int sock) {
+    struct SocketData *sd;
+
+    sd = malloc(sizeof(struct SocketData));
+    sd->fd = sock;
+    sd->max_size = CHUNK_SIZE + 1;
+    sd->real_size = 0;
+    sd->data = malloc(sd->max_size);
+    sd->data[0] = 0;
+    sd->response = NULL;
+    sd->done = false;
+
     return sd;
 }
 
 
-void free_sd(int sock, struct SocketData **socket_data) {
-    struct SocketData *sd = socket_data[sock];
-    if (sd != NULL) {
-        if (sd->data != NULL) {
-            free(sd->data);
-            sd->data = NULL;
-        }
-
-        if (sd->response != NULL) {
-            if (sd->response->fd != 0) {
-                fclose(sd->response->fd);
-                sd->response->fd = 0;
-            }
-
-            if (sd->response->data != NULL) {
-                free(sd->response->data);
-                sd->response->data = NULL;
-            }
-
-            free(sd->response);
-        }
-
-        free(sd);
-
-        socket_data[sock] = NULL;
+void free_sd(struct SocketData *sd) {
+    if (sd->data != NULL) {
+        free(sd->data);
+        sd->data = NULL;
     }
+
+    if (sd->response != NULL) {
+        if (sd->response->fd != 0) {
+            fclose(sd->response->fd);
+            sd->response->fd = 0;
+        }
+
+        if (sd->response->data != NULL) {
+            free(sd->response->data);
+            sd->response->data = NULL;
+        }
+
+        free(sd->response);
+    }
+
+    free(sd);
 }
 
 void close_socket(int sock) {
