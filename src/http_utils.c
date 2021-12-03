@@ -2,10 +2,7 @@
 // Created by Артем on 19.10.2021.
 //
 #include "headers/http_utils.h"
-#include "headers/fs_utils.h"
 #include "headers/utils.h"
-
-#include "sys/sendfile.h"
 
 #include "stdio.h"
 #include "string.h"
@@ -35,18 +32,6 @@ struct Request parse_request(char* buff) {
     urldecode(req.url, req.url);
 
     return req;
-}
-
-bool send_all(int sock, char *data, unsigned long size) {
-    ssize_t total_bytes_send = 0;
-    while (total_bytes_send < size) {
-        ssize_t bytes_send = send(sock, data + total_bytes_send, size - total_bytes_send, MSG_NOSIGNAL);
-        if (bytes_send <= 0) {
-            return false;
-        }
-        total_bytes_send += bytes_send;
-    }
-    return true;
 }
 
 char* create_headers(int status, char *type, unsigned long content_length) {
@@ -115,7 +100,6 @@ bool url_to_path(char *path_buf, unsigned path_length, const char *url, const ch
 }
 
 void urldecode(char *dst, const char *src) {
-    // Source: https://stackoverflow.com/questions/2673207/c-c-url-decode-library/2766963
     char a, b;
     while (*src) {
         if ((*src == '%') &&

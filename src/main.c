@@ -139,22 +139,10 @@ void start_select(int server_sock) {
     epoll_ctl_add(epfd, server_sock, EPOLLIN | EPOLLOUT);
     struct epoll_event events[MAX_EVENTS];
 
-    /*fd_set current_sockets, ready_sockets;
-    FD_ZERO(&current_sockets);
-    FD_SET(server_sock, &current_sockets);*/
-
     while (!sigterm_received) {
         int nfds = epoll_wait(epfd, events, MAX_EVENTS, -1);
-        /*ready_sockets = current_sockets;
-        if (select(FD_SETSIZE, &ready_sockets, NULL, NULL, NULL) < 0) {
-            printf("ERROR: Unable to select!\n");
-            continue;
-        }*/
 
         for (int i = 0; i < nfds; i++) {
-            /*if (!FD_ISSET(sock, &ready_sockets)) {
-                continue;
-            }*/
             struct epoll_event event = events[i];
             int sock = event.data.fd;
 
@@ -164,7 +152,6 @@ void start_select(int server_sock) {
                 init_sd(new_sock, socket_data);
 
                 epoll_ctl_add(epfd, new_sock, EPOLLIN | EPOLLOUT | EPOLLRDHUP | EPOLLHUP);
-                // FD_SET(new_sock, &current_sockets);
             } else {
                 struct SocketData *sd = socket_data[sock];
 
@@ -187,10 +174,11 @@ void start_select(int server_sock) {
 
                 if (sd->done || closed) {
                     if (closed) {
-                        printf("ERROR: Socket %d is closed\n", sock);
-                    }
+                        printf("ERROR: Socket %d is closed but not done!\n", sock);
+                    }/* else {
+                        printf("INFO: Socket is closed!\n");
+                    }*/
                     epoll_ctl(epfd, EPOLL_CTL_DEL, sock, NULL);
-                    // FD_CLR(sock, &current_sockets);
 
                     shutdown(sock, SHUT_RDWR);
                     close_socket(sock);

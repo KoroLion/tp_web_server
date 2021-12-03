@@ -4,10 +4,10 @@ project(web_server C)
 set(CMAKE_C_STANDARD 11)
 
 add_executable(web_server
-        main.c
-        http_utils.c
-        net_utils.c
-        utils.c
-        fs_utils.c
+        src/main.c
+        src/http_utils.c
+        src/net_utils.c
+        src/utils.c
+        src/fs_utils.c
         )
 target_link_libraries(web_server pthread)
