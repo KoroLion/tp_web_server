@@ -88,6 +88,32 @@ struct Response response_text(int status, const char *text) {
     return resp;
 }
 
+void urldecode(char *dst, const char *src) {
+    char hex_num[5];
+
+    unsigned j = 0;
+    unsigned i = 0;
+    while (i < strlen(src)) {
+        char a = src[i + 1];
+        char b = src[i + 2];
+        if (src[i] == '%' && isxdigit(a) && isxdigit(b)) {
+            hex_num[0] = '0';
+            hex_num[1] = 'x';
+            hex_num[2] = a;
+            hex_num[3] = b;
+            hex_num[4] = 0;
+
+            dst[j++] = (char)strtol(hex_num, NULL, 16);
+
+            i += 3;
+        } else {
+            dst[j++] = src[i];
+            i++;
+        }
+        dst[j] = 0;
+    }
+}
+
 bool url_to_path(char *path_buf, unsigned path_length, const char *url, const char *base_dir, const char *default_file) {
     strncpy(path_buf, base_dir, path_length);
     strncat(path_buf, url, path_length);
@@ -97,34 +123,4 @@ bool url_to_path(char *path_buf, unsigned path_length, const char *url, const ch
         return true;
     }
     return false;
-}
-
-void urldecode(char *dst, const char *src) {
-    char a, b;
-    while (*src) {
-        if ((*src == '%') &&
-            ((a = src[1]) && (b = src[2])) &&
-            (isxdigit(a) && isxdigit(b))) {
-            if (a >= 'a')
-                a -= 'a'-'A';
-            if (a >= 'A')
-                a -= ('A' - 10);
-            else
-                a -= '0';
-            if (b >= 'a')
-                b -= 'a'-'A';
-            if (b >= 'A')
-                b -= ('A' - 10);
-            else
-                b -= '0';
-            *dst++ = 16*a+b;
-            src+=3;
-        } else if (*src == '+') {
-            *dst++ = ' ';
-            src++;
-        } else {
-            *dst++ = *src++;
-        }
-    }
-    *dst++ = '\0';
 }
