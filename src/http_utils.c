@@ -107,11 +107,10 @@ void urldecode(char *dst, const char *src) {
 
             i += 3;
         } else {
-            dst[j++] = src[i];
-            i++;
+            dst[j++] = src[i++];
         }
-        dst[j] = 0;
     }
+    dst[j] = 0;
 }
 
 bool url_to_path(char *path_buf, unsigned path_length, const char *url, const char *base_dir, const char *default_file) {

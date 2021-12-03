@@ -9,5 +9,6 @@ add_executable(web_server
         src/net_utils.c
         src/utils.c
         src/fs_utils.c
+        src/test.c
         )
 target_link_libraries(web_server pthread)

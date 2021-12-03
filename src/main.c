@@ -2,7 +2,6 @@
 #include "stdlib.h"
 #include "stdbool.h"
 #include "unistd.h"
-#include "assert.h"
 
 #include "sys/socket.h"
 #include "sys/epoll.h"
@@ -11,9 +10,11 @@
 
 #include "errno.h"
 
+#include "pthread.h"
 #include "signal.h"
 #include "fcntl.h"
 
+#include "headers/test.h"
 #include "headers/utils.h"
 #include "headers/fs_utils.h"
 #include "headers/http_utils.h"
@@ -22,17 +23,26 @@
 #define MAX_EVENTS 2048
 
 char BIND_ADDR[16] = "127.0.0.1";
-int PORT = 8081;
+int PORT = 8084;
 
 const int PACKET_MAX_SIZE = 1 * 1024 * 1024; // 1 MB
 
 const char BASE_DIR[] = "./";
 const char DEFAULT_FILE[] = "index.html";
 
+volatile sig_atomic_t sigterm_received = 0;
+
+struct WorkerThreadArg {
+    int server_sock;
+};
+
 struct Response get_response(char *data) {
     struct Request req = parse_request(data);
+    if (strlen(req.method) == 0 || strlen(req.url) == 0) {
+        return response_text(400, "bad request");
+    }
 
-    printf("%s %s\n", req.method, req.url);
+    printf("T#%d: %s %s\n", gettid(), req.method, req.url);
 
     if (has_double_dot(req.url)) {
         return response_text(403, "url contains double dot!");
@@ -73,7 +83,7 @@ struct Response get_response(char *data) {
 }
 
 char* read_request(int sock, struct SocketData *sd) {
-    int res = read_socket(sock, sd, PACKET_MAX_SIZE);
+    int res = read_http_request(sock, sd, PACKET_MAX_SIZE);
 
     if (res == SOCK_CLOSED || res == SOCK_ERROR) {
         sd->done = true;
@@ -115,8 +125,6 @@ void send_response(int sock, struct SocketData *sd) {
     }
 }
 
-volatile sig_atomic_t sigterm_received = 0;
-
 void sigterm_callback_handler() {
     printf("SIGTERM received! Attempting to close...\n");
     sigterm_received = 1;
@@ -129,7 +137,12 @@ int epoll_ctl_add(int epfd, int fd, uint32_t events) {
     return epoll_ctl(epfd, EPOLL_CTL_ADD, fd, &ev);
 }
 
-void start_select(int server_sock) {
+void worker_thread(void* arg) {
+    printf("INFO: Worker thread started!\n", gettid());
+
+    struct WorkerThreadArg *wta = arg;
+    int server_sock = wta->server_sock;
+
     struct SocketData **socket_data;
     socket_data = malloc(MAX_EVENTS * sizeof(struct SocketData*));
     for (int i = 0; i < MAX_EVENTS; i++) {
@@ -141,7 +154,8 @@ void start_select(int server_sock) {
     struct epoll_event events[MAX_EVENTS];
 
     while (!sigterm_received) {
-        int nfds = epoll_wait(epfd, events, MAX_EVENTS, -1);
+        // timeout to check for sigterm
+        int nfds = epoll_wait(epfd, events, MAX_EVENTS, 1500);
 
         for (int i = 0; i < nfds; i++) {
             struct epoll_event event = events[i];
@@ -191,32 +205,13 @@ void start_select(int server_sock) {
     }
 }
 
-void test() {
-    int res_len = 2048;
-    char *res = malloc(res_len * sizeof(char));
-
-    urldecode(res, "wolf%20lion%20qwer");
-    assert(strncmp("wolf lion qwer", res, res_len) == 0);
-
-    urldecode(res, "%D1%80%D1%83%D1%81%D1%81%D0%BA%D0%B8%D0%B5%20%D0%B1%D1%83%D0%BA%D0%B2%D1%8B");
-    assert(strncmp("русские буквы", res, res_len) == 0);
-
-    urldecode(res, "https%3A%2F%2Fwolf.wolf%2Fwolf%3Fwolf%3Dwqerwrfsadf%20sadf%20sadfasd%20fdas%20fsadfsad%26lion%3D%D1%8B%D0%B2%D0%B0%D0%BB%D1%84%D1%8B%D0%B2%D0%BB%D1%8C%D0%B0%D0%B4%D1%84%D1%8B%20%D1%8C%D0%BB%D0%B4%D0%B0%D1%84%D1%8B%D0%B2%D1%8C%D1%82%D0%BB%D1%8C%D1%82%D0%B0%D1%84%D1%8B%D0%B2%D0%BB%D1%82%D1%8C%D0%B0%D0%BB%D1%8B%D1%84%D0%B2%D1%82");
-    assert(strncmp("https://wolf.wolf/wolf?wolf=wqerwrfsadf sadf sadfasd fdas fsadfsad&lion=ывалфывльадфы ьлдафывьтльтафывлтьалыфвт", res, res_len) == 0);
-
-    urldecode(res, "%BZ1%D0%B2");
-    assert(strncmp("%BZ1в", res, res_len) == 0);
-
-    free(res);
-}
-
 int main(int argc, char *argv[]) {
     test();
 
     long cpus_amount = sysconf(_SC_NPROCESSORS_ONLN);
     printf("%ld cpus available\r\n", cpus_amount);
-    cpus_amount = 2;
 
+    signal(SIGINT, sigterm_callback_handler);
     signal(SIGTERM, sigterm_callback_handler);
     signal(SIGPIPE, SIG_IGN);
 
@@ -232,7 +227,22 @@ int main(int argc, char *argv[]) {
     }
     printf("INFO: Socket %d is listening at %s:%i\r\n", server_sock, BIND_ADDR, PORT);
 
-    start_select(server_sock);
+
+    pthread_t thread_pool[cpus_amount];
+    for (int i = 0; i < cpus_amount; i++) {
+        struct WorkerThreadArg wta;
+        wta.server_sock = server_sock;
+
+        int res = pthread_create(&(thread_pool[i]), NULL, (void*)worker_thread, (void*)&wta);
+        if (res != 0) {
+            printf("ERROR: Unable to create thread!\n");
+            return res;
+        }
+    }
+
+    for (int i = 0; i < cpus_amount; i++) {
+        pthread_join(thread_pool[i], NULL);
+    }
 
     printf("Closing server socket...\n");
     close(server_sock);

@@ -24,7 +24,7 @@ void get_ip(const char *ip, struct sockaddr_in cli);
 int create_server(const char *addr, int port, bool blocking);
 void set_nonblock(int sock);
 
-int read_socket(int sock, struct SocketData *sd, unsigned long max_size) {
+int read_http_request(int sock, struct SocketData *sd, unsigned long max_size) {
     while (true) {
         while (sd->real_size + CHUNK_SIZE + 1 > sd->max_size) {
             sd->max_size *= 2;
@@ -33,10 +33,10 @@ int read_socket(int sock, struct SocketData *sd, unsigned long max_size) {
 
         long bytes_read = recv(sock, sd->data + sd->real_size, CHUNK_SIZE, MSG_DONTWAIT);
         if (bytes_read <= 0) {
-            if (bytes_read == -1 && (errno == EWOULDBLOCK || errno == EAGAIN)) {
-                return READ_PART; // continue read
+            if (bytes_read == 0 || errno == EWOULDBLOCK || errno == EAGAIN) {
+                return READ_PART;
             } else {
-                return SOCK_CLOSED; // socket closed by itself
+                return SOCK_CLOSED;
             }
         }
 
