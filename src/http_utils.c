@@ -92,9 +92,10 @@ struct Response response_text(int status, const char *text) {
 void urldecode(char *dst, const char *src) {
     char hex_num[5];
 
+    unsigned src_len = strlen(src);
     unsigned j = 0;
     unsigned i = 0;
-    while (i < strlen(src)) {
+    while (i < src_len) {
         char a = src[i + 1];
         char b = src[i + 2];
         if (src[i] == '%' && isxdigit(a) && isxdigit(b)) {

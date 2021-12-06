@@ -9,7 +9,6 @@
 #include "fs_utils.h"
 
 #define MAX_BUFF 1024
-#define CHUNK_SIZE 4096
 
 struct Request {
     char method[MAX_BUFF];

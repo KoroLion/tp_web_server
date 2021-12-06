@@ -20,6 +20,7 @@ char* get_ext(char *fname) {
 
     char *res = malloc(ext_len + 1);
     strncpy(res, fname + ext_begins, ext_len);
+    res[ext_len] = 0;
     return res;
 }
 

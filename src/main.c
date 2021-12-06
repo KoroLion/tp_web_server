@@ -19,11 +19,12 @@
 #include "headers/fs_utils.h"
 #include "headers/http_utils.h"
 #include "headers/net_utils.h"
+#include "headers/list.h"
 
 #define MAX_EVENTS 2048
 
-#define READ_TIMEOUT_S 2
-#define WRITE_TIMEOUT_S 2
+#define READ_TIMEOUT_S 3
+#define WRITE_TIMEOUT_S 3
 
 char BIND_ADDR[16] = "127.0.0.1";
 int PORT = 8081;
@@ -134,16 +135,113 @@ void sigterm_callback_handler() {
     stop_received = 1;
 }
 
-void close_socket(int epfd, int time_epfd, struct SocketData *sd) {
+struct ListNode* close_socket(struct ListNode *l, int epfd, struct SocketData *sd) {
     epoll_ctl_del(epfd, sd->fd);
-    epoll_ctl_del(time_epfd, sd->tfd);
-
-    close(sd->tfd);
+    if (l != NULL) {
+        list_delete(&l, sd);
+    }
 
     shutdown(sd->fd, SHUT_RDWR);
     close(sd->fd);
 
     free_sd(sd);
+
+    return l;
+}
+
+struct ListNode* handle_accept(struct ListNode *l, int server_sock, int epfd) {
+
+    pthread_mutex_lock(&accept_mutex);
+    int new_sock = accept(server_sock, NULL, NULL);
+    pthread_mutex_unlock(&accept_mutex);
+
+    if (new_sock == -1) {
+        // other threads could've already accepted this connection
+        if (errno != EWOULDBLOCK && errno != EAGAIN) {
+            perror("ERROR: Unable to accept");
+        }
+        return l;
+    }
+
+    set_nonblock(new_sock);
+
+    struct SocketData *new_sd = malloc_sd(new_sock);
+    epoll_ctl_add(epfd, new_sock, new_sd, EPOLLIN | EPOLLOUT | EPOLLRDHUP | EPOLLHUP);
+
+    new_sd->time_active = time(NULL);
+    list_insert(&l, new_sd);
+
+    return l;
+}
+
+struct ListNode* handle_client(struct ListNode *l, struct epoll_event event, int epfd, struct SocketData *sd) {
+    int sock = sd->fd;
+    bool ready_to_read = event.events & EPOLLIN;
+    bool ready_to_write = event.events & EPOLLOUT;
+    bool read_closed = event.events & EPOLLRDHUP;
+    bool closed = event.events & EPOLLHUP;
+
+    if (sd->response == NULL && read_closed) {
+        closed = true;
+    }
+
+    if (!closed && ready_to_read && sd->response == NULL) {
+        char *request = read_request(sock, sd);
+        if (request != NULL) {
+            sd->time_active = time(NULL);
+
+            struct Response resp = get_response(request);
+            sd->response = malloc(sizeof(resp));
+            memcpy(sd->response, &resp, sizeof(resp));
+        }
+    }
+
+    if (!closed && ready_to_write && sd->response != NULL ) {
+        send_response(sock, sd);
+    }
+
+    if (sd->done || closed) {
+        if (closed) {
+            perror("ERROR: Socket is closed but not done!");
+        }/* else {
+                        printf("INFO: Socket is closed!\n");
+                    }*/
+        l = close_socket(l, epfd, sd);
+    }
+
+    return l;
+}
+
+struct ListNode* check_sockets_timeout(struct ListNode *l, int epfd) {
+    struct ListNode *cur_node = l;
+    time_t cur_time = time(NULL);
+    while (cur_node != NULL) {
+        struct SocketData *sd = cur_node->ptr;
+        unsigned diff = cur_time - sd->time_active;
+
+        bool read_timeout = sd->response == NULL && diff > READ_TIMEOUT_S;
+        bool write_timeout = sd->response && diff > WRITE_TIMEOUT_S;
+
+        if (read_timeout || write_timeout) {
+            printf("WARN: Socket timeout!\n");
+            l = close_socket(l, epfd, sd);
+            cur_node = l;
+        } else {
+            cur_node = cur_node->next;
+        }
+    }
+
+    return l;
+}
+
+void close_client_sockets(struct ListNode *l, int epfd) {
+    struct ListNode *cur_node = l;
+    while (cur_node != NULL) {
+        struct SocketData *sd = cur_node->ptr;
+        close_socket(NULL, epfd, sd);
+        cur_node = cur_node->next;
+    }
+    list_free(&l);
 }
 
 void* worker_thread(void* arg) {
@@ -152,14 +250,13 @@ void* worker_thread(void* arg) {
     struct WorkerThreadArg *wta = arg;
     int server_sock = wta->server_sock;
 
-    int time_epfd = epoll_create(1);
-    struct epoll_event time_events[MAX_EVENTS];
-
     int epfd = epoll_create(1);
     struct epoll_event events[MAX_EVENTS];
 
     struct SocketData *server_sd = malloc_sd(server_sock);
     epoll_ctl_add(epfd, server_sock, server_sd, EPOLLIN | EPOLLOUT);
+
+    struct ListNode *l = NULL;
 
     while (!stop_received) {
         // timeout to check for sigterm and socket timeout
@@ -167,91 +264,39 @@ void* worker_thread(void* arg) {
 
         for (int i = 0; i < nfds; i++) {
             struct epoll_event event = events[i];
-
             struct SocketData *sd = event.data.ptr;
             int sock = sd->fd;
 
             if (sock == server_sock) {
-                pthread_mutex_lock(&accept_mutex);
-                int new_sock = accept(server_sock, NULL, NULL);
-                pthread_mutex_unlock(&accept_mutex);
-
-                set_nonblock(new_sock);
-
-                struct SocketData *new_sd = malloc_sd(new_sock);
-                epoll_ctl_add(epfd, new_sock, new_sd, EPOLLIN | EPOLLOUT | EPOLLRDHUP | EPOLLHUP);
-
-                new_sd->tfd = timerfd_create(CLOCK_MONOTONIC, 0);
-                if (new_sd->tfd == -1) {
-                    perror("Unable to create timeout!");
-                    stop_received = 1;
-                    return NULL;
-                }
-                set_timeout(new_sd->tfd, READ_TIMEOUT_S);
-                epoll_ctl_add(time_epfd, new_sd->tfd, new_sd, EPOLLIN);
+                l = handle_accept(l, server_sock, epfd);
             } else {
-                bool ready_to_read = event.events & EPOLLIN;
-                bool ready_to_write = event.events & EPOLLOUT;
-                bool read_closed = event.events & EPOLLRDHUP;
-                bool closed = event.events & EPOLLHUP;
-
-                if (sd->response == NULL && read_closed) {
-                    closed = true;
-                }
-
-                if (!closed && ready_to_read && sd->response == NULL) {
-                    char *request = read_request(sock, sd);
-                    if (request != NULL) {
-                        printf("Updating timeout\n");
-                        set_timeout(sd->tfd, WRITE_TIMEOUT_S);
-
-                        struct Response resp = get_response(request);
-                        sd->response = malloc(sizeof(resp));
-                        memcpy(sd->response, &resp, sizeof(resp));
-                    }
-                }
-
-                if (!closed && ready_to_write && sd->response != NULL ) {
-                    send_response(sock, sd);
-                }
-
-                if (sd->done || closed) {
-                    if (closed) {
-                        perror("ERROR: Socket is closed but not done!");
-                    }/* else {
-                        printf("INFO: Socket is closed!\n");
-                    }*/
-                    close_socket(epfd, time_epfd, sd);
-                }
+                l = handle_client(l, event, epfd, sd);
             }
         }
 
-        nfds = epoll_wait(time_epfd, time_events, MAX_EVENTS, 0);
-        for (int i = 0; i < nfds; i++) {
-            struct epoll_event event = time_events[i];
-
-            if (event.events & EPOLLIN) {
-                struct SocketData *sd = event.data.ptr;
-
-                printf("T#%d: WARN: Socket timeout!\n", get_tid_hash());
-
-                close_socket(epfd, time_epfd, sd);
-            }
-        }
+        l = check_sockets_timeout(l, epfd);
     }
 
-    free_sd(server_sd);
+    close_client_sockets(l, epfd);
+
+    epoll_ctl_del(epfd, server_sock);
     close(epfd);
+
+    free_sd(server_sd);
 
     return NULL;
 }
 
 int main(int argc, char *argv[]) {
-    test();
+    if (argc == 2) {
+        printf("INFO: Testing...\n");
+        test();
+        printf("INFO: All tests have passed!\n");
+        return 0;
+    }
 
     long cpus_amount = sysconf(_SC_NPROCESSORS_ONLN);
     printf("%ld cpus available\r\n", cpus_amount);
-    // cpus_amount = 2;
 
     signal(SIGINT, sigterm_callback_handler);
     signal(SIGTERM, sigterm_callback_handler);

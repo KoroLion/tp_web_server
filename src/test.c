@@ -7,6 +7,7 @@
 #include "headers/test.h"
 
 #include "headers/http_utils.h"
+#include "headers/list.h"
 
 void test_get_ext() {
     char *ext;
@@ -39,7 +40,7 @@ void test_urldecode() {
     urldecode(res, "wolf");
     assert(strncmp("wolf", res, res_len) == 0);
 
-    memcpy(res, "wolf%20lion%20qwer", 18);
+    strncpy(res, "wolf%20lion%20qwer", 18 + 1);
     urldecode(res, res);
     assert(strncmp("wolf lion qwer", res, res_len) == 0);
 
@@ -58,8 +59,49 @@ void test_urldecode() {
     free(res);
 }
 
+void test_list() {
+    char *s1 = "wolf", *s2 = "lion", *s3 = "white";
+
+    struct ListNode *l = NULL;
+
+    list_insert(&l, s1);
+    assert(strncmp(l->ptr, s1, strlen(s1)) == 0);
+    assert(l->next == NULL);
+
+    list_insert(&l, s2);
+    assert(strncmp(l->ptr, s1, strlen(s1)) == 0);
+    assert(strncmp(l->next->ptr, s2, strlen(s2)) == 0);
+    assert(l->next->next == NULL);
+
+    list_insert(&l, s3);
+    assert(strncmp(l->ptr, s1, strlen(s1)) == 0);
+    assert(strncmp(l->next->ptr, s2, strlen(s2)) == 0);
+    assert(strncmp(l->next->next->ptr, s3, strlen(s3)) == 0);
+    assert(l->next->next->next == NULL);
+
+    list_delete(&l, (void*)123);
+    assert(strncmp(l->ptr, s1, strlen(s1)) == 0);
+    assert(strncmp(l->next->ptr, s2, strlen(s2)) == 0);
+    assert(strncmp(l->next->next->ptr, s3, strlen(s3)) == 0);
+    assert(l->next->next->next == NULL);
+
+    list_delete(&l, s2);
+    assert(strncmp(l->ptr, s1, strlen(s1)) == 0);
+    assert(strncmp(l->next->ptr, s3, strlen(s3)) == 0);
+    assert(l->next->next == NULL);
+
+    list_delete(&l, s1);
+    assert(strncmp(l->ptr, s3, strlen(s3)) == 0);
+    assert(l->next == NULL);
+
+    list_free(&l);
+    assert(l == NULL);
+}
+
 void test() {
     test_get_ext();
 
     test_urldecode();
+
+    test_list();
 }
