@@ -8,6 +8,22 @@
 
 #include "headers/http_utils.h"
 
+void test_get_ext() {
+    char *ext;
+
+    ext = get_ext("wolf.txt");
+    assert(strncmp("txt", ext, strlen(ext)) == 0);
+    free(ext);
+
+    ext = get_ext("complex/path/wolf.jpeg");
+    assert(strncmp("jpeg", ext, strlen(ext)) == 0);
+    free(ext);
+
+    ext = get_ext("wolf.backup.zip");
+    assert(strncmp("zip", ext, strlen(ext)) == 0);
+    free(ext);
+}
+
 void test_urldecode() {
     int res_len = 2048;
     char *res = malloc(res_len * sizeof(char));
@@ -35,5 +51,7 @@ void test_urldecode() {
 }
 
 void test() {
+    test_get_ext();
+
     test_urldecode();
 }

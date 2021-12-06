@@ -18,11 +18,11 @@ struct Request {
 
 struct Response {
     char *data;
-    unsigned long data_length;
+    long data_length;
     off_t data_offset;
 
     FILE *fd;
-    unsigned long fd_length;
+    long fd_length;
     off_t fd_offset;
 };
 

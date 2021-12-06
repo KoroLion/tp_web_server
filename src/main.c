@@ -4,11 +4,11 @@
 #include "unistd.h"
 
 #include "sys/socket.h"
+#include "sys/timerfd.h"
 #include "sys/epoll.h"
-#include "sys/select.h"
 #include "sys/sendfile.h"
 
-#include "errno.h"
+#include "time.h"
 
 #include "pthread.h"
 #include "signal.h"
@@ -22,15 +22,19 @@
 
 #define MAX_EVENTS 2048
 
+#define READ_TIMEOUT_S 2
+#define WRITE_TIMEOUT_S 2
+
 char BIND_ADDR[16] = "127.0.0.1";
-int PORT = 8084;
+int PORT = 8081;
 
 const int PACKET_MAX_SIZE = 1 * 1024 * 1024; // 1 MB
 
 const char BASE_DIR[] = "./";
 const char DEFAULT_FILE[] = "index.html";
 
-volatile sig_atomic_t sigterm_received = 0;
+pthread_mutex_t accept_mutex = PTHREAD_MUTEX_INITIALIZER;
+volatile sig_atomic_t stop_received = 0;
 
 struct WorkerThreadArg {
     int server_sock;
@@ -127,21 +131,29 @@ void send_response(int sock, struct SocketData *sd) {
 
 void sigterm_callback_handler() {
     printf("SIGTERM received! Attempting to close...\n");
-    sigterm_received = 1;
+    stop_received = 1;
 }
 
-int epoll_ctl_add(int epfd, int fd, struct SocketData *sd, uint32_t events) {
-    struct epoll_event ev;
-    ev.events = events;
-    ev.data.ptr = sd;
-    return epoll_ctl(epfd, EPOLL_CTL_ADD, fd, &ev);
+void close_socket(int epfd, int time_epfd, struct SocketData *sd) {
+    epoll_ctl_del(epfd, sd->fd);
+    epoll_ctl_del(time_epfd, sd->tfd);
+
+    close(sd->tfd);
+
+    shutdown(sd->fd, SHUT_RDWR);
+    close(sd->fd);
+
+    free_sd(sd);
 }
 
-void worker_thread(void* arg) {
+void* worker_thread(void* arg) {
     printf("INFO: Worker thread #%d started!\n", get_tid_hash());
 
     struct WorkerThreadArg *wta = arg;
     int server_sock = wta->server_sock;
+
+    int time_epfd = epoll_create(1);
+    struct epoll_event time_events[MAX_EVENTS];
 
     int epfd = epoll_create(1);
     struct epoll_event events[MAX_EVENTS];
@@ -149,23 +161,34 @@ void worker_thread(void* arg) {
     struct SocketData *server_sd = malloc_sd(server_sock);
     epoll_ctl_add(epfd, server_sock, server_sd, EPOLLIN | EPOLLOUT);
 
-    while (!sigterm_received) {
-        // timeout to check for sigterm
+    while (!stop_received) {
+        // timeout to check for sigterm and socket timeout
         int nfds = epoll_wait(epfd, events, MAX_EVENTS, 1500);
 
         for (int i = 0; i < nfds; i++) {
             struct epoll_event event = events[i];
 
             struct SocketData *sd = event.data.ptr;
-            sd->last_active = time(NULL);
             int sock = sd->fd;
 
             if (sock == server_sock) {
+                pthread_mutex_lock(&accept_mutex);
                 int new_sock = accept(server_sock, NULL, NULL);
+                pthread_mutex_unlock(&accept_mutex);
+
                 set_nonblock(new_sock);
 
                 struct SocketData *new_sd = malloc_sd(new_sock);
                 epoll_ctl_add(epfd, new_sock, new_sd, EPOLLIN | EPOLLOUT | EPOLLRDHUP | EPOLLHUP);
+
+                new_sd->tfd = timerfd_create(CLOCK_MONOTONIC, 0);
+                if (new_sd->tfd == -1) {
+                    perror("Unable to create timeout!");
+                    stop_received = 1;
+                    return NULL;
+                }
+                set_timeout(new_sd->tfd, READ_TIMEOUT_S);
+                epoll_ctl_add(time_epfd, new_sd->tfd, new_sd, EPOLLIN);
             } else {
                 bool ready_to_read = event.events & EPOLLIN;
                 bool ready_to_write = event.events & EPOLLOUT;
@@ -179,6 +202,9 @@ void worker_thread(void* arg) {
                 if (!closed && ready_to_read && sd->response == NULL) {
                     char *request = read_request(sock, sd);
                     if (request != NULL) {
+                        printf("Updating timeout\n");
+                        set_timeout(sd->tfd, WRITE_TIMEOUT_S);
+
                         struct Response resp = get_response(request);
                         sd->response = malloc(sizeof(resp));
                         memcpy(sd->response, &resp, sizeof(resp));
@@ -195,19 +221,29 @@ void worker_thread(void* arg) {
                     }/* else {
                         printf("INFO: Socket is closed!\n");
                     }*/
-                    epoll_ctl(epfd, EPOLL_CTL_DEL, sock, NULL);
-
-                    shutdown(sock, SHUT_RDWR);
-                    close(sock);
-
-                    free_sd(sd);
+                    close_socket(epfd, time_epfd, sd);
                 }
+            }
+        }
+
+        nfds = epoll_wait(time_epfd, time_events, MAX_EVENTS, 0);
+        for (int i = 0; i < nfds; i++) {
+            struct epoll_event event = time_events[i];
+
+            if (event.events & EPOLLIN) {
+                struct SocketData *sd = event.data.ptr;
+
+                printf("T#%d: WARN: Socket timeout!\n", get_tid_hash());
+
+                close_socket(epfd, time_epfd, sd);
             }
         }
     }
 
     free_sd(server_sd);
     close(epfd);
+
+    return NULL;
 }
 
 int main(int argc, char *argv[]) {
@@ -245,7 +281,7 @@ int main(int argc, char *argv[]) {
         struct WorkerThreadArg wta;
         wta.server_sock = server_sock;
 
-        int res = pthread_create(&(thread_pool[i]), NULL, (void*)worker_thread, (void*)&wta);
+        int res = pthread_create(&(thread_pool[i]), NULL, worker_thread, (void*)&wta);
         if (res != 0) {
             perror("ERROR: Unable to create thread!");
             return res;

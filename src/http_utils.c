@@ -11,7 +11,7 @@
 struct Request parse_request(char* buff) {
     struct Request req;
 
-    int i = 0;
+    size_t i = 0;
     while (buff[i] != ' ' && i < strlen(buff) && i < sizeof(req.method)) {
         req.method[i] = buff[i];
         i++;

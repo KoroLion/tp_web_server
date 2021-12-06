@@ -17,13 +17,13 @@
 
 #define LISTEN_BACKLOG 128
 
-void get_ip(const char *ip, struct sockaddr_in cli) {
+/*void get_ip(const char *ip, struct sockaddr_in cli) {
     inet_ntop(AF_INET, &cli.sin_addr.s_addr, ip, 64);
-}
+}*/
 
 int set_nonblock(int sock) {
     int flags = fcntl(sock, F_GETFL, 0);
-    fcntl(sock, F_SETFL, flags | O_NONBLOCK);
+    return fcntl(sock, F_SETFL, flags | O_NONBLOCK);
 }
 
 int create_server(const char *addr, const int port, bool blocking) {

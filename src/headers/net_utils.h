@@ -6,6 +6,7 @@
 #define WEB_SERVER_NET_UTILS_H
 
 #include "time.h"
+#include "errno.h"
 
 #define READ_DONE 1
 #define READ_PART 0
@@ -14,18 +15,18 @@
 
 struct SocketData {
     int fd;
+    int tfd;
 
     char *data;
-    long max_size;
-    long real_size;
+    unsigned long max_size;
+    unsigned long real_size;
 
     struct Response *response;
 
     bool done;
-    time_t last_active;
 };
 
-void get_ip(const char *ip, struct sockaddr_in cli);
+// void get_ip(const char *ip, struct sockaddr_in cli);
 int create_server(const char *addr, int port, bool blocking);
 void set_nonblock(int sock);
 
