@@ -157,6 +157,7 @@ void worker_thread(void* arg) {
             struct epoll_event event = events[i];
 
             struct SocketData *sd = event.data.ptr;
+            sd->last_active = time(NULL);
             int sock = sd->fd;
 
             if (sock == server_sock) {
@@ -168,7 +169,12 @@ void worker_thread(void* arg) {
             } else {
                 bool ready_to_read = event.events & EPOLLIN;
                 bool ready_to_write = event.events & EPOLLOUT;
+                bool read_closed = event.events & EPOLLRDHUP;
                 bool closed = event.events & EPOLLHUP;
+
+                if (sd->response == NULL && read_closed) {
+                    closed = true;
+                }
 
                 if (!closed && ready_to_read && sd->response == NULL) {
                     char *request = read_request(sock, sd);
@@ -185,20 +191,23 @@ void worker_thread(void* arg) {
 
                 if (sd->done || closed) {
                     if (closed) {
-                        printf("ERROR: Socket %d is closed but not done!\n", sock);
+                        perror("ERROR: Socket is closed but not done!");
                     }/* else {
                         printf("INFO: Socket is closed!\n");
                     }*/
                     epoll_ctl(epfd, EPOLL_CTL_DEL, sock, NULL);
 
                     shutdown(sock, SHUT_RDWR);
-                    close_socket(sock);
+                    close(sock);
 
                     free_sd(sd);
                 }
             }
         }
     }
+
+    free_sd(server_sd);
+    close(epfd);
 }
 
 int main(int argc, char *argv[]) {
@@ -206,6 +215,7 @@ int main(int argc, char *argv[]) {
 
     long cpus_amount = sysconf(_SC_NPROCESSORS_ONLN);
     printf("%ld cpus available\r\n", cpus_amount);
+    // cpus_amount = 2;
 
     signal(SIGINT, sigterm_callback_handler);
     signal(SIGTERM, sigterm_callback_handler);
@@ -213,12 +223,18 @@ int main(int argc, char *argv[]) {
 
     if (argc == 3) {
         strncpy(BIND_ADDR, argv[1], 16);
-        PORT = atoi(argv[2]);
+        long port = strtol(argv[2], NULL, 10);
+        if (port < 0 || port > 65535) {
+            perror("ERROR: Incorrect port specified!");
+            return -1;
+
+        }
+        PORT = (int)port;
     }
 
     int server_sock = create_server(BIND_ADDR, PORT, false);
     if (server_sock < 0) {
-        printf("ERROR: Unable to create server!\n");
+        perror("ERROR: Unable to create server!");
         return server_sock;
     }
     printf("INFO: Socket %d is listening at %s:%i\r\n", server_sock, BIND_ADDR, PORT);
@@ -231,7 +247,7 @@ int main(int argc, char *argv[]) {
 
         int res = pthread_create(&(thread_pool[i]), NULL, (void*)worker_thread, (void*)&wta);
         if (res != 0) {
-            printf("ERROR: Unable to create thread!\n");
+            perror("ERROR: Unable to create thread!");
             return res;
         }
     }
@@ -240,7 +256,8 @@ int main(int argc, char *argv[]) {
         pthread_join(thread_pool[i], NULL);
     }
 
-    printf("Closing server socket...\n");
+    printf("INFO: Closing server socket...\n");
+    shutdown(server_sock, SHUT_RDWR);
     close(server_sock);
 
     return 0;

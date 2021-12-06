@@ -5,6 +5,8 @@
 #ifndef WEB_SERVER_NET_UTILS_H
 #define WEB_SERVER_NET_UTILS_H
 
+#include "time.h"
+
 #define READ_DONE 1
 #define READ_PART 0
 #define SOCK_CLOSED -1
@@ -20,6 +22,7 @@ struct SocketData {
     struct Response *response;
 
     bool done;
+    time_t last_active;
 };
 
 void get_ip(const char *ip, struct sockaddr_in cli);
@@ -92,11 +95,6 @@ void free_sd(struct SocketData *sd) {
     }
 
     free(sd);
-}
-
-void close_socket(int sock) {
-    shutdown(sock, SHUT_RDWR);
-    close(sock);
 }
 
 #endif //WEB_SERVER_NET_UTILS_H

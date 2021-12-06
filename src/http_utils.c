@@ -57,6 +57,7 @@ struct Response response_file(int status, struct File f) {
     resp.data_length = strlen(headers);
     resp.data = malloc(resp.data_length);
     strncpy(resp.data, headers, resp.data_length);
+    free(headers);
 
     resp.fd_offset = 0;
     resp.fd_length = f.length;

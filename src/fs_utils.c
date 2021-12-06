@@ -24,7 +24,7 @@ char* get_ext(char *fname) {
     return ext;
 }
 
-char* get_type(char *ext) {
+const char* get_type(char *ext) {
     const int MAX_SIZE = 16;
 
     if (strncmp(ext, "html", MAX_SIZE) == 0) {
@@ -76,7 +76,7 @@ struct File open_file(char *fpath) {
     fseek(f.fd, 0, SEEK_SET);
 
     char *ext = get_ext(fpath);
-    char *type = get_type(ext);
+    const char *type = get_type(ext);
     free(ext);
 
     strncpy(f.type, type, sizeof(f.type));

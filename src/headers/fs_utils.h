@@ -21,7 +21,7 @@ struct File {
 };
 
 char* get_ext(char *fname);
-char* get_type(char *ext);
+const char* get_type(char *ext);
 
 bool is_regular_file(const char *fpath);
 bool is_directory(const char *fpath);
