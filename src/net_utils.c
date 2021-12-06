@@ -13,11 +13,8 @@
 #include "netinet/in.h"
 #include "arpa/inet.h"
 
-#include "sys/socket.h"
-
 #include "headers/net_utils.h"
-
-#define LISTEN_BACKLOG 128
+#include "headers/settings.h"
 
 /*void get_ip(const char *ip, struct sockaddr_in cli) {
     inet_ntop(AF_INET, &cli.sin_addr.s_addr, ip, 64);
@@ -35,9 +32,9 @@ int create_server(const char *addr, const int port, bool blocking) {
     if (sockfd == -1) {
         return sockfd;
     }
-    if (setsockopt(sockfd, SOL_SOCKET, SO_REUSEADDR, &(int){1}, sizeof(int)) == -1) {
+    /*if (setsockopt(sockfd, SOL_SOCKET, SO_REUSEADDR, &(int){1}, sizeof(int)) == -1) {
         return -1;
-    }
+    }*/
 
     bzero(&serveraddr, sizeof(serveraddr));
     serveraddr.sin_family = AF_INET;
@@ -62,7 +59,7 @@ int create_server(const char *addr, const int port, bool blocking) {
         set_nonblock(sockfd);
     }
 
-    if (listen(sockfd, LISTEN_BACKLOG) != 0) {
+    if (listen(sockfd, ACCEPT_BACKLOG) != 0) {
         close(sockfd);
         return -1;
     }
@@ -88,7 +85,7 @@ int read_http_request(int sock, struct SocketData *sd, unsigned long max_size) {
 
         sd->real_size += bytes_read;
         if (sd->real_size > max_size) {
-            return SOCK_ERROR; // packet is larger than allowed
+            return SOCK_TOO_BIG; // packet is larger than allowed
         }
 
         sd->data[sd->real_size] = 0;

@@ -1,5 +1,5 @@
 //
-// Created by Артем on 19.10.2021.
+// Created by KoroLion on 19.10.2021.
 //
 
 #ifndef WEB_SERVER_NET_UTILS_H
@@ -16,6 +16,7 @@
 #define READ_PART 0
 #define SOCK_CLOSED -1
 #define SOCK_ERROR -2
+#define SOCK_TOO_BIG -3
 
 struct SocketData {
     int fd;
