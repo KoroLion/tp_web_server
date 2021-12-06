@@ -4,24 +4,23 @@
 #include "headers/fs_utils.h"
 
 char* get_ext(char *fname) {
-    int i = strlen(fname);
-    int j = 0;
-    char *temp = malloc(strlen(fname));
-    while (fname[i] != '.' && i >= 0) {
-        temp[j++] = fname[i--];
-    }
-    temp[j] = 0;
+    unsigned ext_begins = strlen(fname) - 1;
+    unsigned ext_len = 0;
 
-    char *ext = malloc(j);
-    i = j - 1;
-    j = 0;
-    while (i >= 0) {
-        ext[j++] = temp[i--];
+    while (fname[ext_begins] != '.') {
+        if (ext_begins == 0) {
+            char *res = malloc(1);
+            res[0] = 0;
+            return res;
+        }
+        ext_begins--;
+        ext_len++;
     }
-    ext[j] = 0;
+    ext_begins++;
 
-    free(temp);
-    return ext;
+    char *res = malloc(ext_len + 1);
+    strncpy(res, fname + ext_begins, ext_len);
+    return res;
 }
 
 const char* get_type(char *ext) {

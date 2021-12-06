@@ -22,6 +22,14 @@ void test_get_ext() {
     ext = get_ext("wolf.backup.zip");
     assert(strncmp("zip", ext, strlen(ext)) == 0);
     free(ext);
+
+    ext = get_ext("no_ext");
+    assert(strncmp("", ext, strlen(ext)) == 0);
+    free(ext);
+
+    ext = get_ext(".only_ext");
+    assert(strncmp("only_ext", ext, strlen(ext)) == 0);
+    free(ext);
 }
 
 void test_urldecode() {
