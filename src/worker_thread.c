@@ -18,6 +18,7 @@
 #include "headers/http_utils.h"
 #include "headers/fs_utils.h"
 #include "headers/settings.h"
+#include "headers/wsgi.h"
 
 pthread_mutex_t accept_mutex = PTHREAD_MUTEX_INITIALIZER;
 volatile sig_atomic_t stop_received = 0;
@@ -32,6 +33,24 @@ struct Response get_response(char *data) {
 
     if (has_double_dot(req.url)) {
         return response_text(403, "url contains double dot!");
+    }
+
+    if (strncmp(req.url, "/static/", 7) != 0) {
+        struct Response resp;
+        resp.fd = 0;
+        resp.fd_length = 0;
+        resp.fd_offset = 0;
+
+        char *wsgi_answer = get_wsgi_answer();
+        resp.data_length = strlen(wsgi_answer);
+        resp.data = malloc(resp.data_length + 1);
+        memcpy(resp.data, wsgi_answer, resp.data_length);
+        resp.data[resp.data_length] = 0;
+        free(wsgi_answer);
+
+        resp.data_offset = 0;
+
+        return resp;
     }
 
     bool is_get = strcmp(req.method, "GET") == 0;
