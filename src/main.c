@@ -21,12 +21,12 @@ int main(int argc, char *argv[]) {
 
     char bind_addr[16];
     strncpy(bind_addr, DEFAULT_BIND_ADDR, 16);
-    if (argc == 2) {
+    if (argc >= 2) {
         strncpy(bind_addr, argv[1], 16);
     }
 
     int port = DEFAULT_PORT
-    if (argc == 3) {
+    if (argc >= 3) {
         port = (int)strtol(argv[2], NULL, 10);
         if (port < 0 || port > 65535) {
             perror("ERROR: Incorrect port specified!");

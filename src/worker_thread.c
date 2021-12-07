@@ -105,7 +105,7 @@ void send_response(int sock, struct SocketData *sd) {
     } else if (resp->fd_offset < resp->fd_length) {
         size_t to_send = resp->fd_length - resp->fd_offset;
 
-        size_t sent = sendfile(sock, fileno(resp->fd), &resp->fd_offset, to_send);
+        off_t sent = sendfile(sock, fileno(resp->fd), &resp->fd_offset, to_send);
         if (sent < 0) {
             sd->done = true;
             return;
