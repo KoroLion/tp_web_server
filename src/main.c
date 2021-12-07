@@ -5,8 +5,8 @@
 #include "stdio.h"
 #include "stdlib.h"
 #include "unistd.h"
+#include "string.h"
 
-#include "headers/http_utils.h"
 #include "headers/test.h"
 #include "headers/settings.h"
 #include "headers/app.h"
@@ -21,7 +21,7 @@ int main(int argc, char *argv[]) {
 
     char bind_addr[16];
     strncpy(bind_addr, DEFAULT_BIND_ADDR, 16);
-    if (argc == 2) {
+    if (argc >= 2) {
         strncpy(bind_addr, argv[1], 16);
     }
 

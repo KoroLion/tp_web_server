@@ -52,7 +52,7 @@ char* get_wsgi_answer() {
     fputs(script, script_fp);
     fclose(script_fp);
 
-    char command[2048];
+    char command[2248];
     sprintf(command, "cd %s && %s %s", WSGI_PATH, PYTHON_PATH, fpath);
 
     FILE *fp = popen(command, "r");
