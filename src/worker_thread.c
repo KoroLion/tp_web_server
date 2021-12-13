@@ -40,9 +40,9 @@ struct Response get_response(char *data) {
         return response_text(405, "405 (method not allowed)");
     }
 
-    unsigned path_length = strlen(req.url) + strlen(BASE_DIR) + strlen(DEFAULT_FILE) + 16;
+    unsigned path_length = strlen(req.url) + strlen(DEFAULT_BASE_DIR) + strlen(DEFAULT_FILE) + 16;
     char *path_buf = malloc(path_length);
-    bool default_added = url_to_path(path_buf, path_length, req.url, BASE_DIR, DEFAULT_FILE);
+    bool default_added = url_to_path(path_buf, path_length, req.url, DEFAULT_BASE_DIR, DEFAULT_FILE);
 
     if (!is_regular_file(path_buf)) {
         free(path_buf);
