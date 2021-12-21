@@ -11,11 +11,11 @@
 #define ACCEPT_BACKLOG 128
 #define MAX_EVENTS 2048
 
-#define READ_TIMEOUT_S 30
+#define READ_TIMEOUT_S 5
 #define WRITE_TIMEOUT_S 30
 
 #define PACKET_MAX_SIZE 1 * 1024 * 1024 // 1 MB
-#define BASE_DIR "/home/korolion/"
+#define BASE_DIR "/root/www/"
 #define DEFAULT_FILE "index.html"
 
 #endif //WEB_SERVER_SETTINGS_H

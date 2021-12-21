@@ -41,7 +41,7 @@ struct Response get_response(char *data) {
         resp.fd_length = 0;
         resp.fd_offset = 0;
 
-        char *wsgi_answer = get_wsgi_answer();
+        char *wsgi_answer = get_wsgi_answer(data);
         resp.data_length = strlen(wsgi_answer);
         resp.data = malloc(resp.data_length + 1);
         memcpy(resp.data, wsgi_answer, resp.data_length);

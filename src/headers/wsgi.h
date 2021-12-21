@@ -8,8 +8,8 @@
 #include "stdlib.h"
 #include "stdio.h"
 
-#define WSGI_PATH "/home/korolion/liokor_engine/"
-#define PYTHON_PATH "/home/korolion/miniconda3/bin/python"
+#define WSGI_PATH "/root/liokor_engine/"
+#define PYTHON_PATH "/usr/bin/python3"
 
 const char *script = "import io\n"
                      "from liokor_engine.wsgi import application\n"
@@ -17,6 +17,7 @@ const char *script = "import io\n"
                      "\n"
                      "request = '''%s'''\n"
                      "request = parse_request(request)\n"
+                     "body = request['body']\n"
                      "\n"
                      "def start_response(status, headers):\n"
                      "        print('HTTP/1.1 {}'.format(status))\n"
@@ -26,11 +27,13 @@ const char *script = "import io\n"
                      "environ = {\n"
                      "    'REQUEST_METHOD': request['method'],\n"
                      "    'PATH_INFO': request['path'],\n"
+                     "    'QUERY_STRING': request['query'],\n"
                      "    'SERVER_NAME': 'temp.liokor.com',\n"
                      "    'SERVER_PORT': '80',\n"
+                     "    'REMOTE_ADDR': '127.0.0.1',\n"
                      "\n"
                      "    'wsgi.version': (1, 0),\n"
-                     "    'wsgi.input': io.StringIO(request['body']),\n"
+                     "    'wsgi.input': io.BytesIO(body.encode()),\n"
                      "}\n"
                      "\n"
                      "for header in request['headers']:\n"
@@ -42,7 +45,7 @@ const char *script = "import io\n"
                      "    environ[name] = header[1]\n"
                      "\n"
                      "template = application(environ, start_response)\n"
-                     "print(template.content.decode())"
+                     "print(template.content.decode())";
 
 char *rand_string() {
     int len = 32;
@@ -54,14 +57,16 @@ char *rand_string() {
     return str;
 }
 
-char* get_wsgi_answer() {
+char* get_wsgi_answer(char *data) {
     char *fname = rand_string();
     char fpath[2048];
     snprintf(fpath, 2048, "%s%s", WSGI_PATH, fname);
     free(fname);
 
+    char *full_script = malloc(strlen(script) + 100000);
+    sprintf(full_script, script, data);
     FILE *script_fp = fopen(fpath, "w");
-    fputs(script, script_fp);
+    fputs(full_script, script_fp);
     fclose(script_fp);
 
     char command[2248];
